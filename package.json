@@ -1,0 +1,9 @@
+{
+  "name": "gravity-duel",
+  "version": "1.0.0",
+  "description": "Real-time 2-player gravity-flipping duel. Hold to push out, release to fall in.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js", "test": "node test/sim.js && node test/net.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "ws": "^8.18.0" }
+}
