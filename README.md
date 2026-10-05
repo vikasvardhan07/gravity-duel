@@ -17,3 +17,9 @@ Play: Quick Match, a private room link for a friend, or Practice vs Bot (so you 
 - `game.js` — authoritative simulation (60 Hz) + bot. No I/O, unit-testable.
 - `server.js` — HTTP static + WebSocket rooms, matchmaking queue, reconnect (15s grace), forfeit, 30 Hz snapshots.
 - `public/` — canvas client: interpolation, particles, synthesized audio (no assets), touch/mouse/keyboard input.
+
+## Deploy (needs a host that keeps WebSocket connections open — not Vercel/serverless)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/vikasvardhan07/gravity-duel)
+
+`render.yaml` is included (free plan, health check at `/healthz`). Any Node or Docker host works: `npm start`, honours `$PORT`.
+Free instances sleep after inactivity; the first visit may take ~30–50 s to wake. Hit `/healthz` before a demo, or use a paid instance.
