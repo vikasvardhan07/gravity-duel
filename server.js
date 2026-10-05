@@ -16,25 +16,29 @@ const MIME = {
 };
 
 // ---- static files -----------------------------------------------------------------------------
+const bad = (res, code = 400) => { res.writeHead(code, { 'content-type': 'text/plain' }); res.end(code === 404 ? 'Not found' : 'Bad request'); };
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://x');
-  if (url.pathname === '/healthz') { res.writeHead(200); return res.end('ok'); }
-  if (url.pathname === '/stats') {
-    res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ rooms: rooms.size, online: wss.clients.size, queue: queue.length }));
-  }
-  let rel = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
-  const file = path.normalize(path.join(PUB, rel));
-  if (!file.startsWith(PUB)) { res.writeHead(403); return res.end(); }
-  fs.readFile(file, (err, buf) => {
-    if (err) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('Not found'); }
-    res.writeHead(200, {
-      'content-type': MIME[path.extname(file)] || 'application/octet-stream',
-      'cache-control': 'no-cache',
+  try {
+    const url = new URL(req.url, 'http://x');
+    if (url.pathname === '/healthz') { res.writeHead(200); return res.end('ok'); }
+    if (url.pathname === '/stats') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ rooms: rooms.size, online: wss.clients.size, queue: queue.length }));
+    }
+    const rel = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname); // throws on bad %-escapes
+    if (rel.includes('\0')) return bad(res);
+    const file = path.normalize(path.join(PUB, rel));
+    if (!file.startsWith(PUB + path.sep) && file !== PUB) return bad(res, 403);
+    fs.readFile(file, (err, buf) => {
+      if (err) return bad(res, 404);
+      res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'cache-control': 'no-cache' });
+      res.end(buf);
     });
-    res.end(buf);
-  });
+  } catch { bad(res); }
 });
+// Last line of defence: a bug in one request/room must never take the whole game down.
+process.on('uncaughtException', (e) => console.error('uncaught:', e));
+process.on('unhandledRejection', (e) => console.error('unhandled:', e));
 
 // ---- rooms ------------------------------------------------------------------------------------
 const wss = new WebSocketServer({ server, maxPayload: 2048 });
@@ -133,25 +137,32 @@ function flush(room, withEnd) {
 }
 
 // ---- main loop (all rooms, fixed 60 Hz sim, 30 Hz snapshots) -----------------------------------
+function tickRoom(room, now) {
+  const g = room.game;
+  if (!g || g.phase === 'over') { room.last = now; return; }
+  room.acc += Math.min(0.1, (now - room.last) / 1000);
+  room.last = now;
+  while (room.acc >= TICK) {
+    room.acc -= TICK;
+    if (room.bot && (room.botT -= TICK) <= 0) {
+      room.botT = 0.08;
+      g.setPush(1, botDecide(g, g.players[1], 0.82));
+    }
+    g.step(TICK);
+    room.tick++;
+    if (g.phase === 'over') break;
+    if (room.tick % 2 === 0) toRoom(room, g.snap());
+  }
+  if (g.phase === 'over') flush(room, true);
+}
 setInterval(() => {
   const now = Date.now();
-  for (const room of rooms.values()) {
-    const g = room.game;
-    if (!g || g.phase === 'over') { room.last = now; continue; }
-    room.acc += Math.min(0.1, (now - room.last) / 1000);
-    room.last = now;
-    while (room.acc >= TICK) {
-      room.acc -= TICK;
-      if (room.bot && (room.botT -= TICK) <= 0) {
-        room.botT = 0.08;
-        g.setPush(1, botDecide(g, g.players[1], 0.82));
-      }
-      g.step(TICK);
-      room.tick++;
-      if (g.phase === 'over') break;
-      if (room.tick % 2 === 0) toRoom(room, g.snap());
+  for (const [code, room] of rooms) {
+    try { tickRoom(room, now); } catch (e) { // isolate failures: drop only the broken room
+      console.error('room', code, 'crashed:', e);
+      toRoom(room, { t: 'err', m: 'Match crashed — please start a new one', fatal: 1, expired: 1 });
+      rooms.delete(code);
     }
-    if (g.phase === 'over') flush(room, true);
   }
 }, 1000 / 60);
 

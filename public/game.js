@@ -147,7 +147,13 @@ function onMsg(m) {
     case 'rem': toast('Opponent wants a rematch!'); if (view === 'result' && !rematchSent) $('bRematch').querySelector('b').textContent = 'Accept rematch'; break;
     case 'err':
       toast(m.m, 3500);
-      if (m.fatal) { clearSession(); if (m.expired) show('menu'); else if (view === 'lobby') show('menu'); history.replaceState(null, '', location.pathname); }
+      if (m.fatal) {
+        clearSession(); show('menu');
+        const r = new URLSearchParams(location.search).get('r');
+        if (m.expired && r && !sess.get('gd_tried')) { // stale session was blocking an invite link: follow the invite now
+          sess.set('gd_tried', '1'); toast('Joining room ' + r.toUpperCase() + '…'); send({ t: 'join', code: r });
+        } else history.replaceState(null, '', location.pathname);
+      }
       break;
   }
 }
