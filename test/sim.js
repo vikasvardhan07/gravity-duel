@@ -6,7 +6,7 @@ for (let m = 0; m < N; m++) {
   const g = new Game();
   let steps = 0, think = 0;
   while (g.phase !== 'over' && steps < 60 * 400) {
-    if (think-- <= 0) { think = 5; g.setPush(0, botDecide(g, g.players[0], 0.9)); g.setPush(1, botDecide(g, g.players[1], 0.9)); }
+    if (think-- <= 0) { think = 4; g.setPush(0, botDecide(g, g.players[0], 0.9)); g.setPush(1, botDecide(g, g.players[1], 0.9)); }
     g.step(1 / 60); steps++;
     for (const e of g.events) if (e.k === 'hit') agg.hits++;
     g.events.length = 0;

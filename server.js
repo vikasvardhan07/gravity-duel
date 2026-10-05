@@ -61,7 +61,7 @@ function newCode() {
 function makeRoom(bot) {
   const room = {
     code: newCode(), bot: !!bot, ws: [null, null], names: ['', ''], tok: [token(), token()],
-    game: null, rematch: [false, false], dc: [null, null], tick: 0, acc: 0, last: Date.now(), botT: 0, ended: false,
+    game: null, seq: [0, 0], rematch: [false, false], dc: [null, null], tick: 0, acc: 0, last: Date.now(), botT: 0, ended: false,
   };
   if (bot) { room.names[1] = 'Orbit-Bot'; }
   rooms.set(room.code, room);
@@ -81,6 +81,7 @@ function attach(ws, room, idx) {
 
 function startGame(room) {
   room.game = new Game();
+  room.seq = [0, 0];
   room.rematch = [false, false];
   room.ended = false;
   room.last = Date.now(); room.acc = 0; room.tick = 0;
@@ -126,10 +127,13 @@ function forfeit(room, winner) {
   flush(room, true);
 }
 
+// snapshot + the last input sequence number applied per player (lets clients reconcile their prediction)
+function snapOf(room) { const s = room.game.snap(); s.a = room.seq; return s; }
+
 function flush(room, withEnd) {
   const g = room.game;
   if (!g) return;
-  toRoom(room, g.snap());
+  toRoom(room, snapOf(room));
   if (withEnd && g.phase === 'over' && !room.ended) {
     room.ended = true;
     toRoom(room, Object.assign({ t: 'end', names: room.names }, g.stats()));
@@ -145,13 +149,13 @@ function tickRoom(room, now) {
   while (room.acc >= TICK) {
     room.acc -= TICK;
     if (room.bot && (room.botT -= TICK) <= 0) {
-      room.botT = 0.08;
+      room.botT = 0.06;
       g.setPush(1, botDecide(g, g.players[1], 0.82));
     }
     g.step(TICK);
     room.tick++;
     if (g.phase === 'over') break;
-    if (room.tick % 2 === 0) toRoom(room, g.snap());
+    toRoom(room, snapOf(room)); // 60 Hz
   }
   if (g.phase === 'over') flush(room, true);
 }
@@ -181,7 +185,11 @@ wss.on('connection', (ws) => {
     switch (m.t) {
       case 'in': {
         const room = ws.room;
-        if (room && room.game) room.game.setPush(ws.idx, m.p);
+        if (room && room.game) {
+          const lag = Number.isFinite(m.l) ? Math.round(Math.min(250, Math.max(0, m.l)) / (1000 / 60)) : 0;   // sender's one-way latency in ticks
+          room.game.applyInputAt(ws.idx, m.p, lag);
+          if (Number.isInteger(m.s) && m.s > room.seq[ws.idx]) room.seq[ws.idx] = m.s;
+        }
         break;
       }
       case 'ping': send(ws, { t: 'pong', ts: m.ts }); break;

@@ -4,26 +4,7 @@
 // Tangential speed is NOT damped, so angular momentum is conserved: moving inward speeds you up,
 // moving outward slows you down. Collisions are the only way to change your angular momentum.
 
-const C = {
-  R: 420,          // arena radius (outer hazard ring)
-  CORE: 40,        // black-hole radius (inner hazard)
-  ORB: 18,         // orb radius
-  A: 640,          // gravity acceleration (push or pull)
-  VMAX: 700,       // speed cap
-  RDAMP: 0.9,      // damping applied to radial velocity only
-  MATCH: 90,       // seconds
-  COUNT: 4,        // pre-match countdown (1s READY + 3,2,1)
-  RESPAWN: 2,      // seconds out after dying
-  INV: 1.6,        // spawn invulnerability
-  PICK_R: 13,
-  MAXPICK: 3,
-  HIT_WINDOW: 2.5, // a death within this many seconds of being bumped credits a KO
-  KO_BONUS: 2,
-  START_D: 250,
-  START_V: 380,
-  SHRINK_T: 30,    // arena contracts during the last N seconds...
-  R_MIN: 300,      // ...down to this radius
-};
+const { C, advance } = require('./public/physics');
 const TAU = Math.PI * 2;
 const rnd = (a, b) => a + Math.random() * (b - a);
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -42,6 +23,9 @@ class Game {
     this.winner = -1;
     this.reason = '';
     this.players = [0, 1].map((i) => this.mkPlayer(i));
+    this.tickN = 0;            // ticks simulated
+    this.hist = [[], []];      // per-player start-of-tick states (last ~0.5 s) for lag compensation
+    this.lastHit = -999;       // tick of the last collision
     this.addPickup(Math.PI / 2, 250, 0);
     this.addPickup(-Math.PI / 2, 250, 0);
   }
@@ -69,6 +53,28 @@ class Game {
   }
 
   setPush(i, v) { if (this.players[i]) this.players[i].push = v ? 1 : 0; }
+
+  // Lag-compensated input: the player pressed/released `lagTicks` ago (one-way latency). Rewind THAT ORB to then, apply
+  // the new push, and re-simulate to now, so the server's trajectory matches what the player saw. Skipped when a
+  // collision/respawn happened inside the window (re-simulating would erase the bump), so interactions are never undone.
+  applyInputAt(i, v, lagTicks) {
+    const p = this.players[i]; if (!p) return;
+    v = v ? 1 : 0;
+    const h = this.hist[i];
+    let n = Math.min(Math.max(0, lagTicks | 0), h.length, 15);
+    if (this.tickN - this.lastHit <= n) n = 0;
+    if (p.push === v) return;
+    p.push = v;
+    if (n === 0 || !p.alive || (this.phase !== 'play' && this.phase !== 'overtime')) return;
+    const s0 = h[h.length - n];
+    if (!s0 || !s0.alive || !p.alive) return;
+    const o = { x: s0.x, y: s0.y, vx: s0.vx, vy: s0.vy };
+    for (let k = 0; k < n; k++) {
+      h[h.length - n + k] = { x: o.x, y: o.y, vx: o.vx, vy: o.vy, alive: 1, inv: h[h.length - n + k].inv };
+      advance(o, v, 1 / 60);
+    }
+    p.x = o.x; p.y = o.y; p.vx = o.vx; p.vy = o.vy;
+  }
 
   addScore(p, n) {
     p.score += n;
@@ -102,23 +108,15 @@ class Game {
     const a = o.alive ? Math.atan2(o.y, o.x) + Math.PI : rnd(0, TAU);
     p.x = Math.cos(a) * C.START_D; p.y = Math.sin(a) * C.START_D;
     p.vx = -Math.sin(a) * C.START_V; p.vy = Math.cos(a) * C.START_V;
-    p.alive = true; p.inv = C.INV; p.hitBy = -1;
+    p.alive = true; p.inv = C.INV; p.hitBy = -1; this.lastHit = this.tickN;
     this.events.push({ k: 'spawn', i: p.i, x: r1(p.x), y: r1(p.y) });
   }
 
   move(p, dt) {
     if (!p.alive) { p.respT -= dt; if (p.respT <= 0) this.respawn(p); return; }
     if (p.inv > 0) p.inv -= dt;
-    let d = Math.hypot(p.x, p.y) || 1e-6;
-    let nx = p.x / d, ny = p.y / d;
-    const a = p.push ? C.A : -C.A;
-    p.vx += nx * a * dt; p.vy += ny * a * dt;
-    const vr = p.vx * nx + p.vy * ny;
-    const dv = vr * (1 - Math.exp(-C.RDAMP * dt));
-    p.vx -= nx * dv; p.vy -= ny * dv;
-    const sp = Math.hypot(p.vx, p.vy);
-    if (sp > C.VMAX) { const k = C.VMAX / sp; p.vx *= k; p.vy *= k; }
-    p.x += p.vx * dt; p.y += p.vy * dt;
+    advance(p, p.push, dt);
+    let nx, ny, d;
     d = Math.hypot(p.x, p.y) || 1e-6;
     const inner = C.CORE + C.ORB, outer = this.rad() - C.ORB;
     if (d < inner || d > outer) {
@@ -145,7 +143,7 @@ class Game {
     if (rv > 0) {
       const j = (1 + 1.15) * rv / 2;
       a.vx -= j * dx; a.vy -= j * dy; b.vx += j * dx; b.vy += j * dy;
-      a.hitBy = 1; b.hitBy = 0; a.hitT = b.hitT = this.t;
+      a.hitBy = 1; b.hitBy = 0; a.hitT = b.hitT = this.t; this.lastHit = this.tickN;
       this.events.push({ k: 'hit', x: r1((a.x + b.x) / 2), y: r1((a.y + b.y) / 2), s: Math.round(rv) });
     }
   }
@@ -175,7 +173,7 @@ class Game {
     }
     this.spawnT -= dt;
     if (this.spawnT > 0 || this.pickups.length >= C.MAXPICK) return;
-    this.spawnT = rnd(0.9, 1.6);
+    this.spawnT = rnd(0.7, 1.3);
     for (let tries = 0; tries < 12; tries++) {
       const a = rnd(0, TAU), d = rnd(C.CORE + C.ORB + 40, this.rad() - C.ORB - 40);
       const x = Math.cos(a) * d, y = Math.sin(a) * d;
@@ -194,6 +192,11 @@ class Game {
       return;
     }
     if (this.phase === 'play') this.time = Math.max(0, this.time - dt);
+    this.tickN++;
+    for (const p of this.players) {
+      const h = this.hist[p.i]; h.push({ x: p.x, y: p.y, vx: p.vx, vy: p.vy, alive: p.alive ? 1 : 0, inv: p.inv });
+      if (h.length > 32) h.shift();
+    }
     for (const p of this.players) this.move(p, dt);
     this.collide();
     this.collect();
@@ -244,10 +247,10 @@ function botDecide(g, p, level = 0.85) {
   }
   const lo = C.CORE + C.ORB + 60, hi = g.rad() - C.ORB - 60;
   tr = Math.min(hi, Math.max(lo, tr));
-  const want = Math.max(-260, Math.min(260, (tr - d) * 2.4));
+  const want = Math.max(-340, Math.min(340, (tr - d) * 3.0));
   let push = vr < want ? 1 : 0;
-  if (d < lo - 5 && vr < 90) push = 1;       // too close to the black hole
-  if (d > hi + 5 && vr > -90) push = 0;      // too close to the edge
+  if (d < lo - 5 && vr < 120) push = 1;       // too close to the black hole
+  if (d > hi + 5 && vr > -120) push = 0;      // too close to the edge
   if (Math.random() > level) push = 1 - push; // human-ish mistakes
   return push;
 }

@@ -2,7 +2,7 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
 const TAU = Math.PI * 2;
-const C = { R: 420, CORE: 40, ORB: 18, RMIN: 300, SHRINK: 30 };
+const { C, advance } = GDPhys; // shared with the server: identical movement maths on both sides
 const COL = ['#c6ff3d', '#ff5b2e'];
 const RGB = ['198,255,61', '255,91,46'];
 const store = {
@@ -20,7 +20,8 @@ let view = 'menu';               // menu | lobby | how | play | result
 let me = 0, names = ['', ''], code = '', roomBot = false, queued = false;
 let snap = null, recvAt = 0, prevTm = 90, lastCount = null, shrinkWarned = false, endMsg = null;
 let resultTimer = 0, oppLeft = false, rematchSent = false;
-const disp = [0, 1].map(() => ({ x: 0, y: 0, tx: 0, ty: 0, vx: 0, vy: 0, alive: 1, inv: 0, push: 0, score: 0, trail: [], seen: false }));
+const disp = [0, 1].map(() => ({ x: 0, y: 0, bx: 0, by: 0, bvx: 0, bvy: 0, bpush: 0, alive: 1, inv: 0, push: 0, score: 0, trail: [], seen: false }));
+let rtt = 0.12, ack = 0;       // smoothed round-trip (s); last of our inputs the server has applied
 let pickups = [];                // {id,x,y,type,ttl,born}
 const parts = [], texts = [];
 let shake = 0, T = 0, curRad = C.R, lastT = performance.now();
@@ -117,7 +118,7 @@ function send(o) {
   const s = JSON.stringify(o);
   if (ws && ws.readyState === 1) ws.send(s); else if (o.t !== 'in') queueOut.push(s);
 }
-setInterval(() => { if (ws && ws.readyState === 1) ws.send('{"t":"ping"}'); }, 10000);
+setInterval(() => { if (ws && ws.readyState === 1) ws.send('{"t":"ping","ts":' + performance.now() + '}'); }, 1000);
 
 function myName() {
   let n = $('name').value.trim();
@@ -136,6 +137,7 @@ function onMsg(m) {
     case 'queued': queued = true; code = ''; showLobby(); break;
     case 'wait': queued = false; showLobby(); break;
     case 'names': names = m.names; setNames(); break;
+    case 'pong': { const r = (performance.now() - m.ts) / 1000; if (r > 0 && r < 3) rtt = rtt === 0.12 && !onMsg.ponged ? r : rtt * 0.8 + r * 0.2; onMsg.ponged = true; break; }
     case 'start': onStart(m); break;
     case 's': onSnap(m); break;
     case 'end': onEnd(m); break;
@@ -236,7 +238,7 @@ function onStart(m) {
   disp.forEach((d) => { d.trail.length = 0; d.seen = false; });
   $('s0').textContent = '0'; $('s1').textContent = '0';
   $('bRematch').disabled = false; $('bRematch').querySelector('b').textContent = 'Rematch';
-  show('play'); queued = false; setPush(0);
+  show('play'); queued = false; pushState = 0; seq = 0; inputs.length = 0; ack = 0; evalPush();
   $('timer').textContent = '90'; $('timer').classList.remove('low');
   const h = $('hint'); h.classList.remove('hidden'); h.style.animation = 'none'; void h.offsetWidth; h.style.animation = '';
   clearTimeout(onStart.ht); onStart.ht = setTimeout(() => { if (view === 'play') h.classList.add('hidden'); }, m.resumed ? 1 : 14000);
@@ -252,22 +254,22 @@ function popScore(i) {
 }
 function radOf(s) {
   if (!s || s.ph === 'count') return C.R;
-  if (s.ph === 'overtime') return C.RMIN;
-  return C.R - (C.R - C.RMIN) * Math.min(1, Math.max(0, 1 - s.tm / C.SHRINK));
+  if (s.ph === 'overtime') return C.R_MIN;
+  return C.R - (C.R - C.R_MIN) * Math.min(1, Math.max(0, 1 - s.tm / C.SHRINK_T));
 }
 
 function onSnap(s) {
   if (view !== 'play' && view !== 'result') return;
   const first = !snap;
   snap = s; recvAt = performance.now();
+  if (s.a) { ack = s.a[me] | 0; while (inputs.length && inputs[0].seq <= ack) inputs.shift(); }
   for (let i = 0; i < 2; i++) {
     const p = s.p[i], d = disp[i];
-    d.tx = p[0]; d.ty = p[1]; d.vx = p[2]; d.vy = p[3];
+    d.bx = p[0]; d.by = p[1]; d.bvx = p[2]; d.bvy = p[3]; d.bpush = p[7];
     const wasAlive = d.alive;
     d.alive = p[4]; d.inv = p[5];
     if (p[6] !== d.score) { d.score = p[6]; $('s' + i).textContent = p[6]; popScore(i); }
-    d.push = i === me && pushState !== null ? pushState : p[7];
-    if (!d.seen || (p[4] && !wasAlive) || Math.hypot(d.x - d.tx, d.y - d.ty) > 90) { d.x = d.tx; d.y = d.ty; d.seen = true; d.trail.length = 0; }
+    if (!d.seen || (p[4] && !wasAlive)) { d.x = d.bx; d.y = d.by; d.seen = true; d.trail.length = 0; }
   }
   // pickups
   const ids = new Set();
@@ -287,7 +289,7 @@ function onSnap(s) {
   else if (s.ph === 'play') {
     $('timer').textContent = Math.ceil(s.tm);
     $('timer').classList.toggle('low', s.tm <= 10);
-    if (!shrinkWarned && s.tm <= C.SHRINK && prevTm > C.SHRINK - 1) { shrinkWarned = true; banner('ARENA SHRINKING', 'sd'); SFX.warn(); shake += 6; }
+    if (!shrinkWarned && s.tm <= C.SHRINK_T && prevTm > C.SHRINK_T - 1) { shrinkWarned = true; banner('ARENA SHRINKING', 'sd'); SFX.warn(); shake += 6; }
     if (s.tm <= 10 && Math.ceil(s.tm) !== Math.ceil(prevTm)) SFX.tick();
   }
   prevTm = s.tm;
@@ -352,34 +354,49 @@ function burst(x, y, rgb, n, spd, life, size) {
 function text(x, y, t, col, size) { texts.push({ x, y, t, col, size, life: 1 }); }
 
 // ---------------------------------------------------------------- input
-let pushState = null, pointers = 0, keys = 0;
+// Pressed state lives in Sets keyed by pointer id / key code (never a ++/-- counter), and is wiped by every
+// escape route (blur, tab hide, right-click, release outside the window), so a lost key-up can't leave you stuck.
+let pushState = 0, seq = 0;
+const inputs = [];                       // our inputs the server hasn't acknowledged yet: {seq, push, t}
+const ptrs = new Set(), keysDown = new Set();
 function setPush(v) {
+  v = v ? 1 : 0;
   if (v === pushState) return;
   pushState = v;
-  if (view === 'play') {
-    send({ t: 'in', p: v });
-    disp[me].push = v;
-    if (snap && snap.ph !== 'count') (v ? SFX.push : SFX.pull)();
-  }
+  if (view !== 'play') return;
+  seq++; inputs.push({ seq, push: v, t: performance.now() });
+  if (inputs.length > 64) inputs.splice(0, inputs.length - 64);
+  if (ws && ws.readyState === 1) ws.send('{"t":"in","p":' + v + ',"s":' + seq + ',"l":' + Math.round(Math.min(0.25, rtt / 2) * 1000) + '}');
+  if (snap && snap.ph !== 'count') (v ? SFX.push : SFX.pull)();
 }
-const evalPush = () => setPush(pointers > 0 || keys > 0 ? 1 : 0);
+const evalPush = () => setPush(ptrs.size > 0 || keysDown.size > 0);
+const unfocus = () => { const a = document.activeElement; if (a && a !== document.body && a.tagName !== 'INPUT') a.blur(); }; // Space must never "click" a focused button
 const cv = $('c'), ctx = cv.getContext('2d');
-cv.addEventListener('pointerdown', (e) => { auInit(); pointers++; cv.setPointerCapture?.(e.pointerId); evalPush(); e.preventDefault(); });
-const up = () => { pointers = Math.max(0, pointers - 1); evalPush(); };
-cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-cv.addEventListener('lostpointercapture', () => { if (pointers > 0) { pointers = 0; evalPush(); } });
-cv.addEventListener('contextmenu', (e) => e.preventDefault());
-const KEYS = new Set([' ', 'Space', 'ArrowUp', 'w', 'W', 'Shift']);
+cv.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  auInit(); unfocus(); ptrs.add(e.pointerId);
+  try { cv.setPointerCapture(e.pointerId); } catch {}
+  evalPush(); e.preventDefault();
+});
+const pointerUp = (e) => { if (ptrs.delete(e.pointerId)) evalPush(); };
+['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => cv.addEventListener(ev, pointerUp));
+addEventListener('pointerup', pointerUp); addEventListener('pointercancel', pointerUp);   // released outside the canvas/window
+cv.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse' && ptrs.has(e.pointerId) && !(e.buttons & 1)) pointerUp(e); });
+cv.addEventListener('contextmenu', (e) => { e.preventDefault(); ptrs.clear(); evalPush(); });
+const KEYSET = new Set(['Space', 'ArrowUp', 'KeyW', 'ShiftLeft', 'ShiftRight']);
+const typing = (e) => e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
 addEventListener('keydown', (e) => {
-  if (e.target && e.target.tagName === 'INPUT') return;
-  if (KEYS.has(e.key) || KEYS.has(e.code)) { auInit(); if (!e.repeat) { keys++; evalPush(); } e.preventDefault(); }
+  if (!KEYSET.has(e.code) || typing(e)) return;
+  e.preventDefault(); auInit(); unfocus();
+  if (!keysDown.has(e.code)) { keysDown.add(e.code); evalPush(); }
 });
 addEventListener('keyup', (e) => {
-  if (e.target && e.target.tagName === 'INPUT') return;
-  if (KEYS.has(e.key) || KEYS.has(e.code)) { keys = Math.max(0, keys - 1); evalPush(); }
+  if (!KEYSET.has(e.code)) return;
+  if (!typing(e)) e.preventDefault();      // otherwise Space-release would "click" the focused button
+  if (keysDown.delete(e.code)) evalPush();
 });
-const releaseAll = () => { pointers = 0; keys = 0; evalPush(); };
-addEventListener('blur', releaseAll);
+const releaseAll = () => { ptrs.clear(); keysDown.clear(); evalPush(); };
+addEventListener('blur', releaseAll); addEventListener('pagehide', releaseAll);
 document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
 addEventListener('pointerdown', () => auInit(), { once: true });
 
@@ -388,46 +405,122 @@ addEventListener('pointerdown', () => auInit(), { once: true });
 // and only two saturated colours (the players).
 const BONE = '236,230,216';
 const FONT_D = "'Unbounded','Arial Black',sans-serif", FONT_M = "'Martian Mono',ui-monospace,Menlo,monospace";
-let W = 0, H = 0, DPR = 1, S = 1, CX = 0, CY = 0, IX = 0, IY = 0, IS = 1, bg = null, hatch = null;
+let W = 0, H = 0, DPR = 1, dprCap = 2, S = 1, CX = 0, CY = 0, IX = 0, IY = 0, IS = 1, bg = null, hatchCv = null, stat = null, rim = null, rimRad = -1;
+const HALF = C.R + 70;
 const idle = [0, 1].map(() => ({ x: 0, y: 0, trail: [] }));
+const mkCanvas = (w, h = w) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
 
 function makeHatch() {
-  const c = document.createElement('canvas'); c.width = c.height = 14;
-  const g = c.getContext('2d'); g.strokeStyle = `rgb(${BONE})`; g.lineWidth = 1.5; g.beginPath();
+  hatchCv = mkCanvas(14);
+  const g = hatchCv.getContext('2d'); g.strokeStyle = `rgb(${BONE})`; g.lineWidth = 1.5; g.beginPath();
   g.moveTo(-2, 16); g.lineTo(16, -2); g.moveTo(-2, 2); g.lineTo(2, -2); g.moveTo(12, 16); g.lineTo(16, 12); g.stroke();
-  return ctx.createPattern(c, 'repeat');
 }
+function ringOn(g, r) { g.beginPath(); g.arc(0, 0, r, 0, TAU); }
+function hatchBand(g, r0, r1, a) {
+  if (r1 <= r0 || r1 <= 0) return;
+  g._pat = g._pat || g.createPattern(hatchCv, 'repeat');
+  g.save(); g.beginPath(); g.arc(0, 0, r1, 0, TAU); g.arc(0, 0, Math.max(0, r0), 0, TAU, true);
+  g.globalAlpha = a; g.fillStyle = g._pat; g.fill('evenodd'); g.restore();
+}
+
 function resize() {
-  DPR = Math.min(2, window.devicePixelRatio || 1);
+  DPR = Math.max(1, Math.min(window.devicePixelRatio || 1, dprCap));
   W = innerWidth; H = innerHeight;
+  if (W * H * DPR * DPR > 5e6) DPR = Math.max(1, Math.sqrt(5e6 / (W * H)));
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
   const land = W > H * 1.15, top = land ? 18 : 104, bot = land ? 18 : 52;
   S = Math.min(W / (2 * C.R + 110), (H - top - bot) / (2 * C.R + 110));
   CX = W / 2; CY = top + (H - top - bot) / 2;
   if (W > 860) { IX = W * 0.69; IY = H * 0.5; IS = Math.min(W * 0.3, H * 0.4) / C.R; }
   else { IX = W / 2; IY = H * 0.36; IS = Math.min(W * 0.44, H * 0.2) / C.R; }
-  bg = document.createElement('canvas'); bg.width = cv.width; bg.height = cv.height;
+  // background (with vignette + film grain baked in once, so nothing full-screen is composited per frame)
+  bg = mkCanvas(cv.width, cv.height);
   const b = bg.getContext('2d'), g = b.createRadialGradient(bg.width * 0.6, bg.height * 0.45, 0, bg.width / 2, bg.height / 2, Math.max(bg.width, bg.height) * 0.8);
   g.addColorStop(0, '#15151c'); g.addColorStop(1, '#07070a'); b.fillStyle = g; b.fillRect(0, 0, bg.width, bg.height);
   let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  for (let i = 0; i < 90; i++) {
-    b.fillStyle = `rgba(${BONE},${0.08 + rnd() * 0.22})`; const r = (0.5 + rnd() * 0.9) * DPR;
-    b.fillRect(rnd() * bg.width, rnd() * bg.height, r, r);
-  }
-  hatch = makeHatch();
+  for (let i = 0; i < 90; i++) { b.fillStyle = `rgba(${BONE},${0.08 + rnd() * 0.22})`; const r = (0.5 + rnd() * 0.9) * DPR; b.fillRect(rnd() * bg.width, rnd() * bg.height, r, r); }
+  const v = b.createRadialGradient(bg.width / 2, bg.height * 0.46, Math.min(bg.width, bg.height) * 0.3, bg.width / 2, bg.height / 2, Math.max(bg.width, bg.height) * 0.75);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.55)'); b.fillStyle = v; b.fillRect(0, 0, bg.width, bg.height);
+  const nz = mkCanvas(160), nd = nz.getContext('2d'), im = nd.createImageData(160, 160);
+  for (let i = 0; i < im.data.length; i += 4) { im.data[i] = 236; im.data[i + 1] = 230; im.data[i + 2] = 216; im.data[i + 3] = rnd() * 22; }
+  nd.putImageData(im, 0, 0); b.fillStyle = b.createPattern(nz, 'repeat'); b.fillRect(0, 0, bg.width, bg.height);
+  makeHatch(); buildStatic();
 }
-addEventListener('resize', resize); resize();
-if (document.fonts && document.fonts.load) { ['800 20px Unbounded', '600 12px "Martian Mono"'].forEach((f) => document.fonts.load(f).catch(() => {})); }
+let rzT = 0;
+addEventListener('resize', () => { clearTimeout(rzT); rzT = setTimeout(resize, 120); }); resize();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => buildStatic()); // re-paint labels once the real fonts are in
+
+// The arena's unchanging parts are painted once into an offscreen layer; the shrinking rim into another that is
+// only repainted when the radius actually changes. Per frame the arena is two drawImage calls + a few strokes.
+function buildStatic() {
+  const size = Math.ceil(2 * HALF * Math.max(S, IS) * DPR);
+  stat = mkCanvas(size); rim = mkCanvas(size); rimRad = -1;
+  const g = stat.getContext('2d'); g.translate(size / 2, size / 2); const sc = size / (2 * HALF); g.scale(sc, sc);
+  paintStatic(g);
+}
+function paintStatic(g) {
+  const R = C.R;
+  let gr = g.createRadialGradient(0, 0, C.CORE, 0, 0, R);
+  gr.addColorStop(0, '#181821'); gr.addColorStop(1, '#0d0d12');
+  g.fillStyle = gr; ringOn(g, R); g.fill();
+  g.lineWidth = 1; g.strokeStyle = `rgba(${BONE},.1)`;
+  for (const r of [100, 180, 260, 340]) { ringOn(g, r); g.stroke(); }
+  g.strokeStyle = `rgba(${BONE},.07)`; g.beginPath();
+  const r0 = C.CORE + C.ORB + 4;
+  for (let a = 0; a < 12; a++) { const t = a * TAU / 12; g.moveTo(Math.cos(t) * r0, Math.sin(t) * r0); g.lineTo(Math.cos(t) * R, Math.sin(t) * R); }
+  g.stroke();
+  const t1 = new Path2D(), t2 = new Path2D(), t3 = new Path2D();
+  for (let d = 0; d < 360; d += 2) {
+    const a = d * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), len = d % 30 === 0 ? 15 : d % 10 === 0 ? 9 : 4, p = d % 30 === 0 ? t3 : d % 10 === 0 ? t2 : t1;
+    p.moveTo(c * (R + 8), s * (R + 8)); p.lineTo(c * (R + 8 + len), s * (R + 8 + len));
+  }
+  g.lineWidth = 1; g.strokeStyle = `rgba(${BONE},.28)`; g.stroke(t1); g.strokeStyle = `rgba(${BONE},.5)`; g.stroke(t2);
+  g.lineWidth = 1.5; g.strokeStyle = `rgba(${BONE},.9)`; g.stroke(t3);
+  g.font = `500 10px ${FONT_M}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = `rgba(${BONE},.55)`;
+  for (let d = 0; d < 360; d += 30) { const a = d * Math.PI / 180; g.fillText(String(d).padStart(3, '0'), Math.cos(a) * (R + 32), Math.sin(a) * (R + 32)); }
+  g.textBaseline = 'alphabetic';
+  gr = g.createRadialGradient(0, 0, C.CORE, 0, 0, C.CORE + 90);
+  gr.addColorStop(0, `rgba(${BONE},.26)`); gr.addColorStop(1, `rgba(${BONE},0)`);
+  g.fillStyle = gr; ringOn(g, C.CORE + 90); g.fill();
+  hatchBand(g, C.CORE, C.CORE + C.ORB, 0.5);
+  g.fillStyle = '#000'; ringOn(g, C.CORE); g.fill();
+  g.strokeStyle = `rgb(${BONE})`; g.lineWidth = 2.5; ringOn(g, C.CORE); g.stroke();
+}
+function paintRim(rad) {
+  const g = rim.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, rim.width, rim.height);
+  g.translate(rim.width / 2, rim.height / 2); const sc = rim.width / (2 * HALF); g.scale(sc, sc);
+  if (rad < C.R - 1) { // collapsed (already lethal) zone
+    g.fillStyle = `rgba(${BONE},.05)`; g.beginPath(); g.arc(0, 0, C.R, 0, TAU); g.arc(0, 0, rad, 0, TAU, true); g.fill('evenodd');
+    hatchBand(g, rad, C.R, 0.2);
+  }
+  hatchBand(g, rad - 22, rad, 0.55); hatchBand(g, rad - 42, rad - 22, 0.3); hatchBand(g, rad - 62, rad - 42, 0.13);
+  g.strokeStyle = `rgba(${BONE},.16)`; g.lineWidth = 9; ringOn(g, rad); g.stroke();
+  g.strokeStyle = `rgb(${BONE})`; g.lineWidth = 2.5; ringOn(g, rad); g.stroke();
+}
 
 function update(dt) {
   T += dt;
-  const age = Math.min(0.1, (performance.now() - recvAt) / 1000);
-  const live = snap && snap.ph !== 'count' && snap.ph !== 'over';
-  for (const d of disp) {
+  const now = performance.now();
+  const live = snap && (snap.ph === 'play' || snap.ph === 'overtime');
+  // Client-side prediction. The latest server state is `owd` old and doesn't yet contain our unacknowledged inputs,
+  // so re-simulate it forward to "now" with the same physics the server runs, applying our inputs as pressed.
+  const owd = Math.min(0.25, rtt / 2), ahead = Math.min(0.4, (now - recvAt) / 1000 + owd), w0 = recvAt - owd * 1000;
+  for (let i = 0; i < 2; i++) {
+    const d = disp[i];
     if (!d.seen) continue;
-    const px = d.tx + (live && d.alive ? d.vx * age : 0), py = d.ty + (live && d.alive ? d.vy * age : 0);
-    const k = 1 - Math.exp(-dt * 22);
-    d.x += (px - d.x) * k; d.y += (py - d.y) * k;
+    let tx = d.bx, ty = d.by;
+    if (live && d.alive && ahead > 0.001) {
+      const o = { x: d.bx, y: d.by, vx: d.bvx, vy: d.bvy }, n = Math.max(1, Math.ceil(ahead * 60)), h = ahead / n;
+      for (let k = 0; k < n; k++) {
+        let p = d.bpush;
+        if (i === me) { const w = w0 + (k + 0.5) * h * 1000; for (const q of inputs) { if (q.t <= w) p = q.push; else break; } }
+        advance(o, p, h);
+      }
+      tx = o.x; ty = o.y;
+    }
+    d.push = i === me ? pushState : d.bpush;
+    if (Math.hypot(d.x - tx, d.y - ty) > 90) { d.x = tx; d.y = ty; d.trail.length = 0; }
+    else { const k = 1 - Math.exp(-dt * (i === me ? 32 : 24)); d.x += (tx - d.x) * k; d.y += (ty - d.y) * k; }
     if (d.alive && live) { d.trail.push(d.x, d.y); if (d.trail.length > 46) d.trail.splice(0, 2); }
     else if (d.trail.length) d.trail.splice(0, 2);
   }
@@ -467,56 +560,18 @@ function draw() {
   ctx.restore();
 }
 
-function hatchBand(r0, r1, a) {
-  if (r1 <= r0 || r1 <= 0 || !hatch) return;
-  ctx.save(); ctx.beginPath(); ctx.arc(0, 0, r1, 0, TAU); ctx.arc(0, 0, Math.max(0, r0), 0, TAU, true);
-  ctx.globalAlpha = a; ctx.fillStyle = hatch; ctx.fill('evenodd'); ctx.restore();
-}
-function ring(r) { ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); }
-
 function drawArena(rad) {
-  const R = C.R, pulse = 0.5 + 0.5 * Math.sin(T * 3);
-  // floor
-  let g = ctx.createRadialGradient(0, 0, C.CORE, 0, 0, R);
-  g.addColorStop(0, '#181821'); g.addColorStop(1, '#0d0d12');
-  ctx.fillStyle = g; ring(rad); ctx.fill();
-  // collapsed (already lethal) zone between the shrinking rim and the original one
-  if (rad < R - 1) { ctx.fillStyle = `rgba(${BONE},.05)`; ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.arc(0, 0, rad, 0, TAU, true); ctx.fill('evenodd'); hatchBand(rad, R, 0.2); }
-  // polar grid: rings + 12 spokes
-  ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${BONE},.1)`;
-  for (const r of [100, 180, 260, 340]) if (r < rad - 70) { ring(r); ctx.stroke(); }
-  ctx.strokeStyle = `rgba(${BONE},.07)`; ctx.beginPath();
-  const r0 = C.CORE + C.ORB + 4;
-  for (let a = 0; a < 12; a++) { const t = a * TAU / 12; ctx.moveTo(Math.cos(t) * r0, Math.sin(t) * r0); ctx.lineTo(Math.cos(t) * rad, Math.sin(t) * rad); }
-  ctx.stroke();
-  // gravity flow: dashes drifting inward on three rings
-  ctx.lineWidth = 2;
+  const pulse = 0.5 + 0.5 * Math.sin(T * 3);
+  ctx.drawImage(stat, -HALF, -HALF, HALF * 2, HALF * 2);
+  ctx.lineWidth = 2;   // gravity flow: dashes drifting inward on three rings
   [140, 220, 300].forEach((r, i) => {
     if (r > rad - 80) return;
-    ctx.setLineDash([1, 26 + i * 6]); ctx.lineDashOffset = T * (16 + i * 5); ctx.strokeStyle = `rgba(${BONE},.3)`; ring(r); ctx.stroke();
+    ctx.setLineDash([1, 26 + i * 6]); ctx.lineDashOffset = T * (16 + i * 5); ctx.strokeStyle = `rgba(${BONE},.3)`; ringOn(ctx, r); ctx.stroke();
   });
   ctx.setLineDash([]);
-  // lethal band at the rim (stepped hatch fade)
-  hatchBand(rad - 22, rad, 0.55); hatchBand(rad - 42, rad - 22, 0.3); hatchBand(rad - 62, rad - 42, 0.13);
-  ctx.save(); ctx.shadowColor = `rgba(${BONE},.9)`; ctx.shadowBlur = 8 + pulse * 10; ctx.strokeStyle = `rgb(${BONE})`; ctx.lineWidth = 2.5; ring(rad); ctx.stroke(); ctx.restore();
-  // protractor ticks on the ORIGINAL rim (they stay while the live rim shrinks)
-  const t1 = new Path2D(), t2 = new Path2D(), t3 = new Path2D();
-  for (let d = 0; d < 360; d += 2) {
-    const a = d * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), len = d % 30 === 0 ? 15 : d % 10 === 0 ? 9 : 4, p = d % 30 === 0 ? t3 : d % 10 === 0 ? t2 : t1;
-    p.moveTo(c * (R + 8), s * (R + 8)); p.lineTo(c * (R + 8 + len), s * (R + 8 + len));
-  }
-  ctx.lineWidth = 1; ctx.strokeStyle = `rgba(${BONE},.28)`; ctx.stroke(t1); ctx.strokeStyle = `rgba(${BONE},.5)`; ctx.stroke(t2);
-  ctx.lineWidth = 1.5; ctx.strokeStyle = `rgba(${BONE},.9)`; ctx.stroke(t3);
-  ctx.font = `500 10px ${FONT_M}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = `rgba(${BONE},.55)`;
-  for (let d = 0; d < 360; d += 30) { const a = d * Math.PI / 180; ctx.fillText(String(d).padStart(3, '0'), Math.cos(a) * (R + 32), Math.sin(a) * (R + 32)); }
-  ctx.textBaseline = 'alphabetic';
-  // black hole
-  g = ctx.createRadialGradient(0, 0, C.CORE, 0, 0, C.CORE + 90);
-  g.addColorStop(0, `rgba(${BONE},.26)`); g.addColorStop(1, `rgba(${BONE},0)`);
-  ctx.fillStyle = g; ring(C.CORE + 90); ctx.fill();
-  hatchBand(C.CORE, C.CORE + C.ORB, 0.5);
-  ctx.fillStyle = '#000'; ring(C.CORE); ctx.fill();
-  ctx.strokeStyle = `rgb(${BONE})`; ctx.lineWidth = 2.5; ring(C.CORE); ctx.stroke();
+  if (Math.abs(rad - rimRad) > 0.6) { paintRim(rad); rimRad = rad; }
+  ctx.drawImage(rim, -HALF, -HALF, HALF * 2, HALF * 2);
+  ctx.strokeStyle = `rgba(${BONE},${0.05 + pulse * 0.1})`; ctx.lineWidth = 15; ringOn(ctx, rad); ctx.stroke();   // pulsing rim glow (no shadowBlur)
   ctx.lineWidth = 1.5; ctx.lineCap = 'round';
   for (let i = 0; i < 3; i++) {
     const a = T * (1.9 - i * 0.45) + i * 2.1; ctx.strokeStyle = `rgba(${BONE},${0.85 - i * 0.2})`;
@@ -535,7 +590,7 @@ function drawPickups() {
     }
     ctx.rotate(T * (gold ? 1.8 : 1.1) + k.id);
     ctx.beginPath(); ctx.moveTo(0, -sz); ctx.lineTo(sz * 0.7, 0); ctx.lineTo(0, sz); ctx.lineTo(-sz * 0.7, 0); ctx.closePath();
-    if (gold) { ctx.fillStyle = `rgb(${BONE})`; ctx.shadowColor = `rgb(${BONE})`; ctx.shadowBlur = 16; ctx.fill(); }
+    if (gold) { const gg = ctx.createRadialGradient(0, 0, 2, 0, 0, 34); gg.addColorStop(0, `rgba(${BONE},.45)`); gg.addColorStop(1, `rgba(${BONE},0)`); ctx.save(); ctx.rotate(-(T * 1.8 + k.id)); ctx.fillStyle = gg; ctx.beginPath(); ctx.arc(0, 0, 34, 0, TAU); ctx.fill(); ctx.restore(); ctx.fillStyle = `rgb(${BONE})`; ctx.fill(); }
     else { ctx.strokeStyle = `rgb(${BONE})`; ctx.lineWidth = 2; ctx.stroke(); ctx.fillStyle = `rgba(${BONE},.9)`; ctx.fillRect(-1.6, -1.6, 3.2, 3.2); }
     ctx.restore();
   }
@@ -610,10 +665,14 @@ function drawTexts() {
   ctx.globalAlpha = 1;
 }
 
+let ftAvg = 16.7, lastDrop = 0;
 function frame(now) {
-  const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now;
+  const raw = now - lastT, dt = Math.min(0.05, raw / 1000); lastT = now;
+  ftAvg = ftAvg * 0.95 + Math.min(raw, 100) * 0.05;
+  if (ftAvg > 27 && DPR > 1 && now - lastDrop > 4000) { lastDrop = now; dprCap = Math.max(1, DPR - 0.5); ftAvg = 16.7; resize(); } // struggling GPU: drop resolution, keep framerate
   update(dt); draw(); requestAnimationFrame(frame);
 }
+if (typeof window !== 'undefined' && window.__GD_TEST) window.__GD_TEST.api = { disp, inputs, get seq() { return seq; }, get rtt() { return rtt; } }; // test hook (no-op in production)
 requestAnimationFrame(frame);
 refreshOnline();
 connect();

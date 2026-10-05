@@ -16,13 +16,6 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
 .hidden{display:none!important}
 button{font:inherit;color:inherit}
 
-/* film grain + vignette over everything */
-.grain{position:fixed;inset:-50%;width:200%;height:200%;pointer-events:none;z-index:60;opacity:.09;mix-blend-mode:overlay;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  animation:grain 1.2s steps(6) infinite}
-@keyframes grain{0%{transform:translate(0,0)}20%{transform:translate(-3%,2%)}40%{transform:translate(2%,-4%)}60%{transform:translate(-2%,-1%)}80%{transform:translate(4%,3%)}100%{transform:translate(0,0)}}
-body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:59;background:radial-gradient(ellipse at 50% 45%,transparent 55%,rgba(0,0,0,.55))}
-
 /* ---------- HUD ---------- */
 #hud{position:fixed;top:calc(12px + var(--safe-t));left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;padding:0 clamp(14px,3vw,34px);pointer-events:none;z-index:5}
 .score{display:flex;flex-direction:column;gap:2px;min-width:90px;max-width:36vw}
@@ -48,7 +41,7 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:59;bac
   top:38%;bottom:auto;height:auto;padding:18px 0;background:var(--bone);
   background-image:repeating-linear-gradient(135deg,transparent 0 10px,rgba(9,9,12,.1) 10px 12px)}
 #banner.show.sd{animation:bar 1.7s var(--ease)}
-@keyframes ban{0%{opacity:0;transform:scale(1.6);filter:blur(10px)}18%{opacity:1;transform:scale(1);filter:none}72%{opacity:1}100%{opacity:0;transform:scale(.88)}}
+@keyframes ban{0%{opacity:0;transform:scale(1.6)}18%{opacity:1;transform:scale(1)}72%{opacity:1}100%{opacity:0;transform:scale(.88)}}
 @keyframes bar{0%{opacity:0;clip-path:inset(0 100% 0 0)}14%{opacity:1;clip-path:inset(0 0 0 0)}80%{opacity:1;clip-path:inset(0 0 0 0)}100%{opacity:0;clip-path:inset(0 0 0 100%)}}
 
 #hint{position:fixed;left:0;right:0;bottom:calc(20px + var(--safe-b));text-align:center;font:500 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
@@ -191,4 +184,4 @@ input:focus{border-bottom-color:var(--p0)}
   .act{padding:14px 14px}.act.ghost{padding:10px 14px}
   .topbar{padding-bottom:9px}
 }
-@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;animation-iteration-count:1!important}.grain{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;animation-iteration-count:1!important}}
