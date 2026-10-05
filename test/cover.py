@@ -1,120 +1,129 @@
-"""Renders public/cover.png (1600x900) for the contest submission."""
-import math, random
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+"""Renders public/cover.png (1600x900) in the game's ink/bone/lime/vermilion language.
+Needs TTF copies of the fonts: python3 -c "from fontTools.ttLib import TTFont; ..." (see README)."""
+import math, random, sys
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageChops
 K = 2; W, H = 1600*K, 900*K
-def P(v): return int(v*K)
-bg = Image.new('RGB', (W, H), (3, 4, 11))
-px = bg.load()
-cx0, cy0 = W/2, H*0.5
-maxd = math.hypot(W, H)*0.55
-for y in range(0, H):
-    for x in range(0, W, 1):
-        d = min(1, math.hypot(x-cx0, y-cy0)/maxd)
-        t = (1-d)**1.6
-        px[x, y] = (int(3+13*t), int(4+17*t), int(11+52*t))
-img = bg.convert('RGBA')
-random.seed(4)
-d = ImageDraw.Draw(img)
-for _ in range(220):
-    x, y, r = random.random()*W, random.random()*H, random.random()*2.2*K+0.6*K
-    a = int(70+random.random()*150); d.ellipse((x-r, y-r, x+r, y+r), fill=(205, 215, 255, a))
+P = lambda v: int(v*K)
+INK=(9,9,12); BONE=(236,230,216); LIME=(198,255,61); VERM=(255,91,46)
+FD = '/tmp/claude-501/ttf/unbounded.ttf'; FM = '/tmp/claude-501/ttf/martian-mono.ttf'
 
-def glow(draw_fn, blur, alpha=1.0):
-    layer = Image.new('RGBA', (W, H), (0, 0, 0, 0)); draw_fn(ImageDraw.Draw(layer))
-    layer = layer.filter(ImageFilter.GaussianBlur(blur*K))
-    if alpha < 1: layer.putalpha(layer.getchannel('A').point(lambda v: int(v*alpha)))
-    return layer
+def font(path, size, wght):
+    f = ImageFont.truetype(path, size)
+    try: f.set_variation_by_axes([wght])
+    except Exception: pass
+    return f
 
-CX, CY, R = P(800), P(505), P(300)
-def circ(dr, r, **kw): dr.ellipse((CX-r, CY-r, CX+r, CY+r), **kw)
+# ---- background: ink with soft vignette + grain
+img = Image.new('RGB', (W, H), INK)
+v = Image.radial_gradient('L').resize((W, H)); v = v.point(lambda p: int(255-p*0.9))
+img = Image.composite(Image.new('RGB', (W, H), (24, 24, 32)), img, v.point(lambda p: int(p*0.55))).convert('RGBA')
+random.seed(3)
+noise = Image.effect_noise((W, H), 28).convert('L').point(lambda p: max(0, p-128)*2)
+img = Image.alpha_composite(img, Image.merge('RGBA', (Image.new('L', (W, H), 236), Image.new('L', (W, H), 230), Image.new('L', (W, H), 216), noise.point(lambda p: int(p*0.10)))))
 
-# arena
-img = Image.alpha_composite(img, glow(lambda g: circ(g, R, outline=(255, 45, 111, 255), width=P(10)), 10))
-d = ImageDraw.Draw(img)
-circ(d, R, fill=(10, 13, 44, 215))
-# danger gradient inside rim
-danger = Image.new('RGBA', (W, H), (0, 0, 0, 0)); dd = ImageDraw.Draw(danger)
-for i in range(60):
-    r = R - P(i*1.4); a = int(95*(1-i/60)**1.8)
-    circ(dd, r, outline=(255, 45, 111, a), width=P(2))
-img = Image.alpha_composite(img, danger); d = ImageDraw.Draw(img)
-circ(d, R, outline=(255, 90, 135, 255), width=P(6))
-# flow dots
-for rr in (110, 175, 240):
-    n = int(rr*0.9)
-    for i in range(n):
-        a = i/n*2*math.pi
-        x, y = CX+math.cos(a)*P(rr), CY+math.sin(a)*P(rr)
-        d.ellipse((x-P(1.6), y-P(1.6), x+P(1.6), y+P(1.6)), fill=(150, 170, 255, 85))
+def layer(): return Image.new('RGBA', (W, H), (0, 0, 0, 0))
+def blur(l, r): return l.filter(ImageFilter.GaussianBlur(r*K))
+
+CX, CY, R = P(1165), P(455), P(300)
+def circ(d, r, cx=CX, cy=CY, **kw): d.ellipse((cx-r, cy-r, cx+r, cy+r), **kw)
+
+# arena floor
+l = layer(); d = ImageDraw.Draw(l); circ(d, R, fill=(20, 20, 28, 255)); img = Image.alpha_composite(img, l)
+# polar grid
+l = layer(); d = ImageDraw.Draw(l)
+for r in (95, 165, 235):
+    circ(d, P(r), outline=BONE+(34,), width=P(1.2))
+for a in range(12):
+    t = a*math.pi/6; d.line([(CX+math.cos(t)*P(62), CY+math.sin(t)*P(62)), (CX+math.cos(t)*R, CY+math.sin(t)*R)], fill=BONE+(22,), width=P(1))
+img = Image.alpha_composite(img, l)
+
+# hatch bands (rim + core)
+def hatch_mask(r0, r1, spacing=7):
+    m = Image.new('L', (W, H), 0); md = ImageDraw.Draw(m)
+    for x in range(-H, W+H, P(spacing)):
+        md.line([(x, 0), (x-H, H)], fill=255, width=P(1.6))
+    ring = Image.new('L', (W, H), 0); rd = ImageDraw.Draw(ring); circ(rd, r1, fill=255); circ(rd, r0, fill=0)
+    return ImageChops.multiply(m, ring)
+for (a, b, al) in ((R-P(22), R, 150), (R-P(42), R-P(22), 85), (R-P(62), R-P(42), 38)):
+    m = hatch_mask(a, b).point(lambda p, al=al: int(p*al/255)); l = Image.new('RGBA', (W, H), BONE+(0,)); l.putalpha(m); img = Image.alpha_composite(img, l)
+m = hatch_mask(P(40), P(58)).point(lambda p: int(p*0.55)); l = Image.new('RGBA', (W, H), BONE+(0,)); l.putalpha(m); img = Image.alpha_composite(img, l)
+
+# rim glow + line
+l = layer(); d = ImageDraw.Draw(l); circ(d, R, outline=BONE+(255,), width=P(6)); img = Image.alpha_composite(img, blur(l, 8).point(lambda p: p) if False else blur(l, 8))
+l = layer(); d = ImageDraw.Draw(l); circ(d, R, outline=BONE+(255,), width=P(3)); img = Image.alpha_composite(img, l)
+# protractor ticks
+l = layer(); d = ImageDraw.Draw(l)
+for deg in range(0, 360, 2):
+    a = math.radians(deg); major = deg % 30 == 0; mid = deg % 10 == 0
+    ln = P(15 if major else 9 if mid else 4); al = 230 if major else 130 if mid else 70
+    d.line([(CX+math.cos(a)*(R+P(8)), CY+math.sin(a)*(R+P(8))), (CX+math.cos(a)*(R+P(8)+ln), CY+math.sin(a)*(R+P(8)+ln))], fill=BONE+(al,), width=P(1.5 if major else 1))
+fm = font(FM, P(11), 500)
+for deg in range(0, 360, 30):
+    a = math.radians(deg); d.text((CX+math.cos(a)*(R+P(34)), CY+math.sin(a)*(R+P(34))), f'{deg:03d}', font=fm, fill=BONE+(140,), anchor='mm')
+img = Image.alpha_composite(img, l)
+
 # black hole
-img = Image.alpha_composite(img, glow(lambda g: circ(g, P(80), fill=(255, 45, 111, 230)), 26))
-d = ImageDraw.Draw(img)
-circ(d, P(40), fill=(0, 0, 0, 255), outline=(255, 45, 111, 255), width=P(4))
-for i, (a0, a1) in enumerate([(200, 300), (20, 120), (110, 160)]):
-    r = P(48+i*7); d.arc((CX-r, CY-r, CX+r, CY+r), a0, a1, fill=(255, 140+i*30, 180, 220), width=P(4))
+l = layer(); d = ImageDraw.Draw(l); circ(d, P(120), fill=BONE+(70,)); img = Image.alpha_composite(img, blur(l, 30))
+l = layer(); d = ImageDraw.Draw(l); circ(d, P(40), fill=(0, 0, 0, 255), outline=BONE+(255,), width=P(3))
+for i, (a0, a1) in enumerate(((200, 310), (20, 140), (95, 150))):
+    r = P(68+i*7); d.arc((CX-r, CY-r, CX+r, CY+r), a0, a1, fill=BONE+(220-i*50,), width=P(2))
+img = Image.alpha_composite(img, l)
 
-def orb(x, y, rgb, tr_from):
+# orbs
+def orb(x, y, col, p0, ctrl):
     global img
-    # trail (curved)
-    tl = Image.new('RGBA', (W, H), (0, 0, 0, 0)); td = ImageDraw.Draw(tl)
-    pts = []
-    for i in range(36):
-        t = i/35
-        pts.append((tr_from[0]+(x-tr_from[0])*t + math.sin(t*math.pi)*tr_from[2], tr_from[1]+(y-tr_from[1])*t + math.sin(t*math.pi)*tr_from[3]))
+    t = layer(); td = ImageDraw.Draw(t); pts = []
+    for i in range(44):
+        s = i/43; px = (1-s)**2*p0[0] + 2*(1-s)*s*ctrl[0] + s*s*x; py = (1-s)**2*p0[1] + 2*(1-s)*s*ctrl[1] + s*s*y; pts.append((px, py))
     for i in range(1, len(pts)):
-        f = i/len(pts); w = P(30*f)
-        td.line([pts[i-1], pts[i]], fill=rgb+(int(170*f),), width=max(1, w))
-    tl = tl.filter(ImageFilter.GaussianBlur(P(2)))
-    img = Image.alpha_composite(img, tl)
-    img = Image.alpha_composite(img, glow(lambda g: g.ellipse((x-P(60), y-P(60), x+P(60), y+P(60)), fill=rgb+(150,)), 22))
-    dd2 = ImageDraw.Draw(img); r = P(30)
-    for i in range(r, 0, -1):
-        f = i/r; c = tuple(int(rgb[j]*(0.45+0.55*(1-f))) for j in range(3))
-        ox = -(1-f)*P(9); oy = -(1-f)*P(10)
-        dd2.ellipse((x+ox-i, y+oy-i, x+ox+i, y+oy+i), fill=c+(255,))
-    dd2.ellipse((x-P(12), y-P(14), x-P(2), y-P(5)), fill=(255, 255, 255, 230))
+        f = i/len(pts); td.line([pts[i-1], pts[i]], fill=col+(int(190*f*f),), width=max(1, int(P(32)*f)))
+    img = Image.alpha_composite(img, blur(t, 1.5))
+    g = layer(); gd = ImageDraw.Draw(g); gd.ellipse((x-P(60), y-P(60), x+P(60), y+P(60)), fill=col+(120,)); img = Image.alpha_composite(img, blur(g, 22))
+    o = layer(); od = ImageDraw.Draw(o); r = P(24)
+    od.ellipse((x-r, y-r, x+r, y+r), fill=col+(255,))
+    od.ellipse((x-P(18), y-P(18), x+P(18), y+P(18)), outline=INK+(100,), width=P(2))
+    od.ellipse((x-P(8)-P(3), y-P(9)-P(3), x-P(8)+P(3), y-P(9)+P(3)), fill=BONE+(255,))
+    od.ellipse((x-r-P(6), y-r-P(6), x+r+P(6), y+r+P(6)), outline=BONE+(140,), width=P(1.6))
+    img = Image.alpha_composite(img, o)
+orb(CX-P(150), CY-P(215), LIME, (CX-P(330), CY-P(10)), (CX-P(290), CY-P(200)))
+orb(CX+P(185), CY+P(190), VERM, (CX+P(320), CY-P(30)), (CX+P(330), CY+P(170)))
 
-orb(CX-P(150), CY-P(205), (0, 229, 255), (CX-P(285), CY-P(40), -P(10), -P(60)))
-orb(CX+P(170), CY+P(190), (255, 106, 61), (CX+P(290), CY+P(10), P(10), P(60)))
-
-def shard(x, y, s, rgb):
+# shards
+def shard(x, y, s, gold):
     global img
-    img = Image.alpha_composite(img, glow(lambda g: g.polygon([(x, y-s), (x+s*.75, y), (x, y+s), (x-s*.75, y)], fill=rgb+(220,)), 12))
-    d3 = ImageDraw.Draw(img); d3.polygon([(x, y-s), (x+s*.75, y), (x, y+s), (x-s*.75, y)], fill=rgb+(255,))
-    d3.polygon([(x, y-s*.5), (x+s*.3, y), (x, y+s*.5), (x-s*.3, y)], fill=(255, 255, 255, 220))
-shard(CX+P(175), CY-P(120), P(15), (120, 255, 200))
-shard(CX-P(190), CY+P(115), P(15), (120, 255, 200))
-shard(CX+P(20), CY-P(215), P(22), (255, 210, 63))
+    l = layer(); d = ImageDraw.Draw(l); poly = [(x, y-s), (x+s*.7, y), (x, y+s), (x-s*.7, y)]
+    if gold:
+        for k, rr in enumerate((P(26), P(46))): circ(d, rr, cx=x, cy=y, outline=BONE+(150-k*70,), width=P(1.5))
+        g = layer(); gd = ImageDraw.Draw(g); gd.polygon(poly, fill=BONE+(255,)); img = Image.alpha_composite(img, blur(g, 8))
+        d.polygon(poly, fill=BONE+(255,))
+    else:
+        d.polygon(poly, outline=BONE+(255,), width=P(2.4)); d.rectangle((x-P(2), y-P(2), x+P(2), y+P(2)), fill=BONE+(255,))
+    img = Image.alpha_composite(img, l)
+shard(CX+P(200), CY-P(150), P(11), False); shard(CX-P(205), CY+P(130), P(11), False); shard(CX+P(30), CY-P(235), P(16), True)
 
-def font(sz, bold=True):
-    for p in ('/System/Library/Fonts/Supplemental/Arial Black.ttf', '/System/Library/Fonts/Supplemental/Arial Bold.ttf', '/System/Library/Fonts/Helvetica.ttc'):
-        try: return ImageFont.truetype(p, sz)
-        except Exception: pass
-    return ImageFont.load_default()
+# ---- typography (left column)
 d = ImageDraw.Draw(img)
-# gradient title
-title = 'GRAVITY DUEL'; f = font(P(112))
-sp = P(10)
-widths = [d.textlength(ch, font=f) for ch in title]; total = sum(widths)+sp*(len(title)-1)
-mask = Image.new('L', (W, H), 0); md = ImageDraw.Draw(mask); x = (W-total)/2; ty = P(34)
-for ch, w in zip(title, widths):
-    md.text((x, ty), ch, font=f, fill=255); x += w+sp
-grad = Image.new('RGBA', (W, H)); gp = grad.load()
-x0, x1 = int((W-total)/2), int((W+total)/2)
-for xx in range(x0, x1):
-    t = (xx-x0)/(x1-x0); c = (int(0+255*t), int(229-123*t), int(255-194*t), 255)
-    for yy in range(ty, ty+P(150)): gp[xx, yy] = c
-shadow = glow(lambda g: None, 1)
-sh = Image.new('RGBA', (W, H), (0, 0, 0, 0)); sh.putalpha(mask.filter(ImageFilter.GaussianBlur(P(10)))); 
-dark = Image.new('RGBA', (W, H), (0, 0, 0, 255)); dark.putalpha(mask.filter(ImageFilter.GaussianBlur(P(10))).point(lambda v: int(v*0.7)))
-img = Image.alpha_composite(img, dark)
-txt = Image.new('RGBA', (W, H), (0, 0, 0, 0)); txt.paste(grad, (0, 0), mask)
-img = Image.alpha_composite(img, txt)
+fh = font(FD, P(128), 900)
+d.text((P(70), P(190)), 'GRAVITY', font=fh, fill=BONE+(255,))
+# outlined DUEL
+m = Image.new('L', (W, H), 0); ImageDraw.Draw(m).text((P(70)+P(24), P(190)+P(112)), 'DUEL', font=fh, fill=255)
+edge = ImageChops.subtract(m.filter(ImageFilter.MaxFilter(5)), m.filter(ImageFilter.MinFilter(5)))
+l = Image.new('RGBA', (W, H), BONE+(0,)); l.putalpha(edge); img = Image.alpha_composite(img, l)
 d = ImageDraw.Draw(img)
-f2 = font(P(36)); tag = 'Hold to push out.  Release to fall in.  Knock your rival into the void.'
-d.text((W/2, P(852)), tag, font=f2, fill=(238, 241, 255, 255), anchor='mm')
-f3 = font(P(26))
-d.text((P(40), P(850)), 'REAL-TIME  ·  2 PLAYERS  ·  ANY DEVICE', font=f3, fill=(152, 160, 200, 255), anchor='lm') if False else None
-out = img.convert('RGB').resize((1600, 900), Image.LANCZOS)
-out.save('public/cover.png', optimize=True)
-print('saved', out.size)
+ft = font(FM, P(15), 500)
+d.text((P(74), P(70)), 'GD—001   /   REAL-TIME DUEL', font=ft, fill=BONE+(150,))
+d.line([(P(70), P(100)), (P(70)+P(560), P(100))], fill=BONE+(70,), width=P(1))
+fb = font(FD, P(30), 600)
+d.text((P(74), P(500)), 'One button. Two orbits.', font=fb, fill=BONE+(255,))
+fs = font(FM, P(17), 400)
+for i, line in enumerate(('Hold to push out. Release to fall in.', 'Steal the shards. Throw your rival into the void.')):
+    d.text((P(74), P(556)+i*P(32)), line, font=fs, fill=BONE+(170,))
+# chips
+def chip(x, y, txt, col, fg=INK):
+    f = font(FM, P(14), 700); w = d.textlength(txt, font=f)+P(26)
+    d.rectangle((x, y, x+w, y+P(32)), fill=col+(255,)); d.text((x+P(13), y+P(16)), txt, font=f, fill=fg+(255,), anchor='lm'); return x+w+P(10)
+x = P(74)
+x = chip(x, P(690), 'PLAY NOW', LIME); x = chip(x, P(690), '2 PLAYERS', BONE); x = chip(x, P(690), 'ANY DEVICE', BONE)
+d.text((P(74), P(760)), 'NO INSTALL   ·   SHARE A LINK   ·   PRACTICE VS BOT', font=font(FM, P(13), 500), fill=BONE+(110,))
+
+out = img.convert('RGB').resize((1600, 900), Image.LANCZOS); out.save('public/cover.png', optimize=True); print('saved', out.size)
