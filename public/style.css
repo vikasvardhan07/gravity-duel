@@ -131,16 +131,7 @@ input:focus{border-bottom-color:var(--p0)}
 #lobbyState::before{content:"●";color:var(--p0);margin-right:8px;animation:blink 1s steps(2) infinite}
 @keyframes blink{50%{opacity:0}}
 
-/* how-to */
-.diagrams{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:2px 0 4px}
-.diagrams figure{margin:0;border:1px solid var(--line);padding:10px 8px 12px;text-align:center;background:rgba(9,9,12,.4)}
-.diagrams svg{width:min(120px,100%);display:block;margin:0 auto 6px;overflow:visible}
-.d-ring{fill:none;stroke:var(--line);stroke-width:1.5;stroke-dasharray:2 5}
-.d-core{fill:#000;stroke:var(--bone);stroke-width:1.5}
-.d-orb{fill:var(--p0)}
-.d-chev{fill:none;stroke:var(--bone);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
-.diagrams figcaption{font:400 12px/1.4 var(--body);color:var(--mut)}
-.diagrams b{font:700 12px var(--mono);letter-spacing:.14em;color:var(--bone)}
+/* how-to / training */
 .steps{margin:2px 0 6px;padding:0;list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:2px}
 .steps li{counter-increment:s;position:relative;padding:10px 0 10px 34px;border-top:1px solid var(--line);font-size:14px;line-height:1.45;color:#c9c3b4}
 .steps li::before{content:"0" counter(s);position:absolute;left:0;top:12px;font:600 10px/1.9 var(--mono);color:var(--p0);letter-spacing:.14em}
@@ -165,6 +156,18 @@ input:focus{border-bottom-color:var(--p0)}
 .srow .bars i:first-child{background:var(--p0);flex:0 1 0}.srow .bars i:last-child{background:var(--p1);flex:0 1 0}
 .srow span:last-child{text-align:right}
 
+#tut{position:fixed;inset:0;z-index:12;pointer-events:none}
+.tutcard{position:absolute;top:calc(14px + var(--safe-t));left:50%;transform:translateX(-50%);width:min(540px,calc(100vw - 32px));padding:14px 18px 16px;background:rgba(18,18,24,.92);border:1px solid var(--line);animation:panelin .5s var(--ease) both}
+.tutmeta{display:flex;justify-content:space-between;align-items:center;font:600 10px/1 var(--mono);letter-spacing:.2em;color:var(--mut);margin-bottom:10px}
+#tutDots{display:flex;gap:5px}#tutDots i{width:22px;height:4px;background:var(--line)}#tutDots i.on{background:var(--bone)}#tutDots i.ok{background:var(--p0)}
+.tutcard h3{margin:0 0 6px;font:800 clamp(20px,5vw,27px)/1.05 var(--disp);letter-spacing:-.04em;text-transform:uppercase}
+.tutcard p{margin:0;font-size:14.5px;line-height:1.45;color:#c9c3b4}
+#tutKey{position:absolute;left:50%;bottom:calc(64px + var(--safe-b));transform:translateX(-50%);display:flex;align-items:center;gap:12px;white-space:nowrap}
+#tutKeyLabel{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--mut)}
+#tutState{font:700 13px/1 var(--mono);letter-spacing:.14em;padding:11px 16px;border:1px solid var(--bone);background:rgba(9,9,12,.7);min-width:150px;text-align:center;transition:background .08s,color .08s}
+#tutState.on{background:var(--p0);border-color:var(--p0);color:var(--ink)}
+#tut .act.sm{position:absolute;right:14px;bottom:calc(14px + var(--safe-b));pointer-events:auto;width:auto;background:rgba(9,9,12,.7)}
+h2.ok{color:var(--p0)}
 @media (max-width:860px){
   .shell{grid-template-columns:1fr;grid-template-areas:"top" "hero" "panel";row-gap:22px}
   #menu{background:linear-gradient(180deg,rgba(9,9,12,.45),rgba(9,9,12,.9) 60%)}
@@ -175,6 +178,7 @@ input:focus{border-bottom-color:var(--p0)}
 }
 @media (max-height:700px) and (max-width:860px){.tag{display:none}.panel{padding:16px}.act{padding:13px 14px}}
 @media (max-height:720px){
+  .tutcard{padding:10px 14px 12px}.tutcard p{font-size:13px}
   .panel.solo{padding:18px 18px 16px}.panel{gap:8px}
   h2{font-size:24px}
   .diagrams svg{width:64px}.diagrams figure{padding:8px 6px 8px}

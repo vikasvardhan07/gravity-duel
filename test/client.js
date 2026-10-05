@@ -4,42 +4,16 @@
 // tracks the ideal (zero-latency) orb, and checks input handling robustness.
 const vm = require('vm'), fs = require('fs'), path = require('path');
 const { Game, botDecide } = require('../game');
+const { boot } = require('./harness');
 let fails = 0;
 const ok = (c, m, x = '') => { console.log((c ? 'PASS ' : 'FAIL ') + m + (x ? '  ' + x : '')); if (!c) fails++; };
 
 function run({ owd, predict = true, seconds = 12, seed = 1 }) {
-  let vt = 0;                                   // virtual clock (ms)
-  const sent = [], handlers = {}, rafs = [];
-  const loose = (over = {}) => new Proxy(function () {}, {
-    get: (t, k) => (k in over ? over[k] : k === Symbol.toPrimitive ? () => 0 : k === 'then' ? undefined : k === 'toJSON' ? undefined : loose()),
-    apply: () => loose(), construct: () => loose(), set: () => true,
-  });
-  let fake;
-  class FakeWS { constructor() { fake = this; this.readyState = 1; setTimeout(() => this.onopen && this.onopen(), 0); } send(m) { sent.push({ t: vt, m: JSON.parse(m) }); } }
-  const els = {};
-  const doc = loose({
-    getElementById: (id) => (els[id] = els[id] || loose({ classList: loose({ toggle() {}, add() {}, remove() {} }), value: '', dataset: {}, querySelector: () => loose() })),
-    createElement: () => loose({ getContext: () => loose({ createImageData: () => ({ data: new Uint8ClampedArray(160 * 160 * 4) }) }) }),
-    addEventListener: (t, f) => { (handlers['doc:' + t] = handlers['doc:' + t] || []).push(f); },
-    activeElement: null, body: {}, fonts: undefined, hidden: false,
-  });
-  const store = { getItem: () => null, setItem() {}, removeItem() {} };
-  const ctx = {
-    console, Math, JSON, Date, Set, Map, Proxy, Path2D: function () { return loose(); }, URL, URLSearchParams, Promise,
-    setTimeout, clearTimeout, setInterval: () => 0, clearInterval() {}, fetch: () => Promise.resolve({ json: () => ({}) }),
-    document: doc, localStorage: store, sessionStorage: store, navigator: {}, location: { protocol: 'https:', host: 'x', href: 'https://x/', search: '', origin: 'https://x', pathname: '/' },
-    history: { replaceState() {} }, innerWidth: 1000, innerHeight: 600, devicePixelRatio: 2, performance: { now: () => vt },
-    requestAnimationFrame: (f) => { rafs.push(f); return 1; }, WebSocket: FakeWS, AudioContext: undefined,
-    addEventListener: (t, f) => { (handlers[t] = handlers[t] || []).push(f); },
-    __GD_TEST: {},
-  };
-  ctx.window = ctx; ctx.self = ctx; ctx.globalThis = ctx;
-  vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/physics.js'), 'utf8'), ctx);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/game.js'), 'utf8'), ctx);
-  const api = ctx.__GD_TEST.api;
-  const fire = (type, e) => (handlers[type] || []).forEach((f) => f(Object.assign({ preventDefault() {}, target: { tagName: 'BODY' } }, e)));
-
+  const B = boot();
+  const { sent, handlers, api, fire } = B;
+  const fake = B.ws;
+  let vt = 0;
+  const rafs = B.rafs;
   // --- fake server + ideal reference world
   const g = new Game(), ideal = new Game();
   const seq = [0, 0], inFlight = [], toClient = [];
@@ -51,7 +25,7 @@ function run({ owd, predict = true, seconds = 12, seed = 1 }) {
   const DT = 1 / 60;
   const frames = Math.round(seconds * 60);
   for (let f = 0; f < frames; f++) {
-    vt += DT * 1000;
+    vt += DT * 1000; B.vt = vt;
     // human = controller reading the ideal (zero-latency) world, pressing Space with the real key events
     if (vt >= nextThink && ideal.phase !== 'count') {
       nextThink = vt + 60;

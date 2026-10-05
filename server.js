@@ -149,8 +149,8 @@ function tickRoom(room, now) {
   while (room.acc >= TICK) {
     room.acc -= TICK;
     if (room.bot && (room.botT -= TICK) <= 0) {
-      room.botT = 0.06;
-      g.setPush(1, botDecide(g, g.players[1], 0.82));
+      room.botT = 0.15;
+      g.setPush(1, botDecide(g, g.players[1], 0.45));
     }
     g.step(TICK);
     room.tick++;

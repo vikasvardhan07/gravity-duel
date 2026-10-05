@@ -11,7 +11,7 @@
     ORB: 18,         // orb radius
     A: 1080,         // gravity acceleration (push outward / pull inward)
     VMAX: 910,       // speed cap
-    RDAMP: 1.17,     // damping on radial velocity only (tangential speed is conserved)
+    RDAMP: 0.35,     // damping on radial velocity only (tangential speed is conserved); low so a push swings you out and a release swings you back in past the middle ring
     MATCH: 90,       // seconds
     COUNT: 4,        // pre-match countdown (1s READY + 3,2,1)
     RESPAWN: 1.6,    // seconds out after dying

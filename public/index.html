@@ -50,6 +50,7 @@
         <button class="act sm" id="bJoin"><b>Join</b><u>→</u></button>
       </div>
       <button class="act ghost" id="bBot"><i>03</i><b>Practice vs Bot</b><u>→</u></button>
+      <button class="act ghost" id="bTut"><i>?</i><b>How to play · 30 s demo</b><u>→</u></button>
     </div>
   </div>
 </section>
@@ -70,29 +71,29 @@
   </div>
 </section>
 
-<!-- HOW TO -->
-<section id="how" class="screen hidden">
+<!-- TRAINING (interactive, offline) -->
+<div id="tut" class="hidden">
+  <div class="tutcard brk">
+    <div class="tutmeta"><span id="tutStep">STEP 1 / 4</span><span id="tutDots"></span></div>
+    <h3 id="tutTitle"></h3>
+    <p id="tutBody"></p>
+  </div>
+  <div id="tutKey"><span id="tutKeyLabel"></span><b id="tutState">FALLING ▼</b></div>
+  <button class="act ghost sm" id="tutSkip"><b>Skip training</b><u>→</u></button>
+</div>
+<section id="tdone" class="screen hidden">
   <div class="shell narrow">
-    <header class="topbar"><span>BRIEFING</span><span>30 SECONDS TO LEARN</span></header>
+    <header class="topbar"><span>TRAINING</span><span>COMPLETE</span></header>
     <div class="panel brk solo">
-      <h2>How to fly</h2>
-      <div class="diagrams">
-        <figure>
-          <svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="44" class="d-ring"/><circle cx="60" cy="60" r="9" class="d-core"/><circle cx="60" cy="40" r="8" class="d-orb"/><path d="M52 28l8-8 8 8M52 18l8-8 8 8" class="d-chev"/></svg>
-          <figcaption><b>HOLD</b><br>push away from the hole</figcaption>
-        </figure>
-        <figure>
-          <svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="44" class="d-ring"/><circle cx="60" cy="60" r="9" class="d-core"/><circle cx="60" cy="14" r="8" class="d-orb"/><path d="M52 26l8 8 8-8M52 36l8 8 8-8" class="d-chev"/></svg>
-          <figcaption><b>RELEASE</b><br>gravity pulls you in</figcaption>
-        </figure>
-      </div>
+      <h2 class="ok">Demo complete</h2>
+      <p class="sub">You know the controls. The real thing adds a live rival, a shrinking arena and KO bonuses.</p>
       <ul class="steps">
-        <li>Closer to the hole = <b>faster</b>. Use it to catch the shards ◇ <em>(+1)</em> and gold ◆ <em>(+3)</em>.</li>
-        <li>The <b>hatched zones</b> knock you out for 2 s. The outer edge <b>shrinks</b> in the last 30 s.</li>
-        <li>Bump your rival. If they fall in soon after, that’s a <b>KO +2</b>.</li>
+        <li><b>Hold</b> to push out, <b>release</b> to fall in. Closer is faster.</li>
+        <li>Shards: <b>+1</b>, gold <b>+3</b>. Bump your rival into the hatched zone for <b>KO +2</b>.</li>
         <li>Most points in 90 s wins. A tie goes to <b>sudden death</b>.</li>
       </ul>
-      <button class="act primary" id="bHowGo"><i>▷</i><b>Got it — launch</b><u>→</u></button>
+      <button class="act primary" id="bTutGo"><i>▷</i><b id="tutGoLabel">Start</b><u>→</u></button>
+      <button class="act ghost" id="bTutAgain"><i>↻</i><b>Practice again</b><u></u></button>
     </div>
   </div>
 </section>

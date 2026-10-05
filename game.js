@@ -230,6 +230,7 @@ class Game {
 // ---- Practice bot -----------------------------------------------------------------------------
 // Bang-bang radial controller: pick the pickup it will reach soonest (angular momentum is fixed,
 // so it can only choose WHEN to be at which radius), then steer radius toward it. Avoids hazards.
+const BOTP = { K: 3.0, V: 340, MARGIN: 60, GUARD: 120, LOOK: 0.22 };
 function botDecide(g, p, level = 0.85) {
   if (!p.alive) return 0;
   const d = Math.hypot(p.x, p.y) || 1;
@@ -245,14 +246,19 @@ function botDecide(g, p, level = 0.85) {
     const tt = dth / Math.max(Math.abs(w), 0.2) - (k.type ? 0.8 : 0);
     if (tt < best && tt < k.ttl) { best = tt; tr = Math.hypot(k.x, k.y); }
   }
-  const lo = C.CORE + C.ORB + 60, hi = g.rad() - C.ORB - 60;
+  const lo = C.CORE + C.ORB + BOTP.MARGIN, hi = g.rad() - C.ORB - BOTP.MARGIN;
   tr = Math.min(hi, Math.max(lo, tr));
-  const want = Math.max(-340, Math.min(340, (tr - d) * 3.0));
+  const want = Math.max(-BOTP.V, Math.min(BOTP.V, (tr - d) * BOTP.K));
   let push = vr < want ? 1 : 0;
-  if (d < lo - 5 && vr < 120) push = 1;       // too close to the black hole
-  if (d > hi + 5 && vr > -120) push = 0;      // too close to the edge
-  if (Math.random() > level) push = 1 - push; // human-ish mistakes
+  // look ahead: where will the radius be in LOOK seconds if we coast? never coast into a hazard
+  const dAhead = d + vr * BOTP.LOOK;
+  if (dAhead > hi + BOTP.MARGIN * 0.4 || (d > hi && vr > -BOTP.GUARD)) push = 0;
+  if (dAhead < lo - BOTP.MARGIN * 0.4 || (d < lo && vr < BOTP.GUARD)) push = 1;
+  // Human-like imperfection: occasional LAPSES (keeps holding its previous input for 0.15-0.5 s), not random flips.
+  if (p.lapse > 0) { p.lapse -= 1 / 15; return p.lastPush | 0; }
+  if (Math.random() < (1 - level) * 0.12) p.lapse = 0.15 + Math.random() * 0.35;
+  p.lastPush = push;
   return push;
 }
 
-module.exports = { Game, C, botDecide };
+module.exports = { Game, C, botDecide, BOTP };

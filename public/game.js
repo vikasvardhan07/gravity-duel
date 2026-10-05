@@ -102,7 +102,7 @@ function connect() {
     if (c && t) ws.send(JSON.stringify({ t: 'resume', code: c, tok: t }));
     else {
       const r = new URLSearchParams(location.search).get('r');
-      if (r && !sess.get('gd_tried')) { sess.set('gd_tried', '1'); toast('Joining room ' + r.toUpperCase() + '…'); send({ t: 'join', code: r }); }
+      if (r && !sess.get('gd_tried')) { sess.set('gd_tried', '1'); gate('Join room ' + r.toUpperCase(), () => { toast('Joining room ' + r.toUpperCase() + '…'); send({ t: 'join', code: r }); }); }
     }
     while (queueOut.length) ws.send(queueOut.shift());
   };
@@ -165,10 +165,12 @@ function clearSession() { sess.del('gd_code'); sess.del('gd_tok'); }
 // ---------------------------------------------------------------- screens
 function show(v) {
   view = v;
-  for (const id of ['menu', 'lobby', 'how', 'result']) $(id).classList.toggle('hidden', id !== v);
+  for (const id of ['menu', 'lobby', 'tdone', 'result']) $(id).classList.toggle('hidden', id !== v);
+  $('tut').classList.toggle('hidden', v !== 'tut');
   const playing = v === 'play' || v === 'result';
   $('hud').classList.toggle('hidden', !playing);
   if (v !== 'play') $('hint').classList.add('hidden');
+  if (v !== 'tut' && v !== 'tdone' && tut) { tut = null; disp[0].seen = false; pickups = []; }
   if (v === 'menu') { snap = null; droneSet(false); refreshOnline(); }
 }
 let toastT = 0;
@@ -208,17 +210,19 @@ function refreshOnline() {
 
 // ---------------------------------------------------------------- menu wiring
 $('name').value = store.get('gd_name') || '';
-$('bQuick').onclick = () => { auInit(); send({ t: 'quick' }); };
-$('bCreate').onclick = () => { auInit(); send({ t: 'create' }); };
+// First-time players do the interactive training before any way into a match; it never repeats once finished or skipped.
+const gate = (label, action) => (store.get('gd_tut') === '1' ? action() : startTutorial(label, action));
+$('bQuick').onclick = () => { auInit(); gate('Find a match', () => send({ t: 'quick' })); };
+$('bCreate').onclick = () => { auInit(); gate('Create my room', () => send({ t: 'create' })); };
 $('bJoin').onclick = () => {
   auInit(); const c = $('code').value.trim().toUpperCase();
   if (c.length !== 4) return toast('Enter the 4-letter room code');
-  send({ t: 'join', code: c });
+  gate('Join room ' + c, () => send({ t: 'join', code: c }));
 };
 $('code').addEventListener('input', () => { $('code').value = $('code').value.toUpperCase().replace(/[^A-Z]/g, ''); });
 $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('bJoin').click(); });
-$('bBot').onclick = () => { auInit(); if (store.get('gd_seen')) send({ t: 'bot' }); else show('how'); };
-$('bHowGo').onclick = () => { auInit(); store.set('gd_seen', '1'); send({ t: 'bot' }); };
+$('bBot').onclick = () => { auInit(); gate('Start vs bot', () => send({ t: 'bot' })); };
+$('bTut').onclick = () => { auInit(); startTutorial('Back to menu', () => show('menu')); };
 $('bLobbyBot').onclick = () => { auInit(); send({ t: 'bot' }); };
 $('bLobbyBack').onclick = () => { send({ t: 'leave' }); clearSession(); history.replaceState(null, '', location.pathname); show('menu'); };
 $('bCopy').onclick = async () => { toast((await copyText($('bCopy').dataset.link)) ? 'Invite link copied!' : 'Copy failed — share the code ' + code); };
@@ -353,6 +357,91 @@ function burst(x, y, rgb, n, spd, life, size) {
 }
 function text(x, y, t, col, size) { texts.push({ x, y, t, col, size, life: 1 }); }
 
+// ---------------------------------------------------------------- interactive training
+// Offline sandbox running the exact same physics as a match. Four short tasks; each one teaches one rule by doing it.
+const coarse = typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches;
+const HOLD = coarse ? 'Touch and hold anywhere' : 'Hold the mouse button or SPACE';
+$('tutKeyLabel').textContent = coarse ? 'Touch & hold anywhere' : 'Mouse button · SPACE';
+const TUT = [
+  { title: 'Hold to push away', body: HOLD + ' — your orb accelerates away from the black hole. Push it out to the dashed ring.', test: (t) => pushState === 1 && t.d > 300 },
+  { title: 'Release to fall in', body: 'Let go — gravity drags you back toward the hole, and you speed up the closer you get. Fall inside the dashed ring.', test: (t) => pushState === 0 && t.d < 170 },
+  { title: 'Catch the shard', body: 'Time your hold and release to meet the glowing diamond. Hold = outward, release = inward.', shard: 0 },
+  { title: 'Mind the edges', body: 'Grab the gold shard (worth 3), but stay out of the hatched zones. In a match they knock you out for 2 seconds.', shard: 1 },
+];
+let tut = null;
+const tutOrb = () => ({ x: C.START_D, y: 0, vx: 0, vy: C.START_V });
+function startTutorial(label, after) {
+  clearTimeout(resultTimer);
+  snap = null; pickups = []; parts.length = 0; texts.length = 0; me = 0; curRad = C.R; shake = 0;
+  disp.forEach((d) => { d.trail.length = 0; d.seen = false; });
+  tut = { step: 0, o: tutOrb(), label, after, hazardT: -9, stepT: 0, shardT: 0, done: false, d: C.START_D };
+  Object.assign(disp[0], { seen: true, alive: 1, inv: 0, push: 0, x: tut.o.x, y: tut.o.y });
+  $('tutGoLabel').textContent = label; droneSet(false);
+  show('tut'); tutGo(0);
+}
+function tutGo(step) {
+  tut.step = step; tut.stepT = 0; pickups = [];
+  const t = TUT[step];
+  $('tutStep').textContent = 'STEP ' + (step + 1) + ' / ' + TUT.length;
+  $('tutTitle').textContent = t.title; $('tutBody').textContent = t.body;
+  $('tutDots').innerHTML = TUT.map((_, i) => '<i class="' + (i < step ? 'ok' : i === step ? 'on' : '') + '"></i>').join('');
+  if (t.shard !== undefined) tutShard(t.shard, false);
+}
+function tutShard(gold, retry) { // place the diamond ahead of the orb, on a path it can actually reach
+  const o = tut.o, w = o.x * o.vy - o.y * o.vx, d = Math.hypot(o.x, o.y);
+  const a = Math.atan2(o.y, o.x) + Math.sign(w || 1) * (retry ? 0.9 : gold ? 1.3 : 1.0);
+  const r = retry ? Math.min(330, Math.max(130, d)) : gold ? 335 : 230;
+  pickups = [{ id: 900 + tut.step, born: T, x: Math.cos(a) * r, y: Math.sin(a) * r, type: gold, ttl: 99 }];
+  tut.shardT = 0;
+}
+function tutStepDone() {
+  const d = disp[0];
+  burst(d.x, d.y, '198,255,61', 26, 280, 0.7, 3.2); text(d.x, d.y - 34, 'NICE', '#c6ff3d', 26);
+  TUT[tut.step].shard === 1 ? SFX.gold() : SFX.pick(); buzz(14);
+  if (tut.step + 1 < TUT.length) tutGo(tut.step + 1);
+  else { tut.done = true; pickups = []; store.set('gd_tut', '1'); SFX.win(); show('tdone'); }
+}
+function tutorialStep(dt) {
+  tut.stepT += dt;
+  const o = tut.o, n = Math.max(1, Math.ceil(dt * 120)), h = dt / n, dd = disp[0];
+  for (let k = 0; k < n; k++) advance(o, tut.done ? 0 : pushState, h);
+  const d = Math.hypot(o.x, o.y); tut.d = d;
+  const lo = C.CORE + C.ORB, hi = C.R - C.ORB, grace = tut.done || T - tut.hazardT <= 1.2;
+  if (grace && (d < lo || d > hi)) { // protected (just respawned / demo finished): bounce off the hazards like a spawn shield
+    const nx = o.x / d, ny = o.y / d, k = (d < lo ? lo : hi) / d; o.x *= k; o.y *= k;
+    const vr = o.vx * nx + o.vy * ny;
+    if ((d < lo && vr < 0) || (d > hi && vr > 0)) { o.vx -= 1.6 * vr * nx; o.vy -= 1.6 * vr * ny; }
+  } else if (!grace && (d < lo || d > hi)) { // hazard: show a knockout, then reset
+    burst(o.x, o.y, RGB[0], 60, 360, 0.9, 3.6); SFX.die(); shake = Math.max(shake, 10);
+    text(o.x * 0.75, o.y * 0.75, 'KNOCKED OUT', '#ece6d8', 24); buzz(60);
+    tut.o = tutOrb(); tut.hazardT = T; dd.trail.length = 0; tut.shardT = 0;
+  }
+  dd.x = tut.o.x; dd.y = tut.o.y; dd.alive = 1; dd.push = pushState; dd.inv = Math.max(0, tut.hazardT + 1.2 - T);
+  dd.trail.push(dd.x, dd.y); if (dd.trail.length > 46) dd.trail.splice(0, 2);
+  const st = $('tutState'); st.textContent = pushState ? 'PUSHING ▲' : 'FALLING ▼'; st.classList.toggle('on', !!pushState);
+  if (tut.done) return;
+  const t = TUT[tut.step];
+  if (t.shard !== undefined) {
+    const k = pickups[0]; tut.shardT += dt;
+    if (k && Math.hypot(k.x - dd.x, k.y - dd.y) < C.ORB + C.PICK_R) tutStepDone();
+    else if (tut.shardT > 9) tutShard(t.shard, true);
+  } else if (t.test(tut) && tut.stepT > 0.5) tutStepDone();
+}
+function drawTutOverlay() {
+  if (!tut || tut.done || TUT[tut.step].shard !== undefined) return;
+  const r = tut.step === 0 ? 300 : 170, pulse = 0.5 + 0.5 * Math.sin(T * 4);
+  ctx.save(); ctx.setLineDash([10, 8]); ctx.lineDashOffset = -T * 22; ctx.strokeStyle = 'rgba(198,255,61,' + (0.5 + 0.4 * pulse) + ')'; ctx.lineWidth = 3;
+  ringOn(ctx, r); ctx.stroke(); ctx.restore();
+  ctx.font = '600 11px ' + FONT_M; ctx.textAlign = 'center'; ctx.fillStyle = '#c6ff3d';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '3px';
+  ctx.fillText(tut.step === 0 ? 'REACH THE RING' : 'FALL INSIDE THE RING', 0, -r - 12);
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+}
+const endTutorial = () => { const a = tut.after; tut = null; disp[0].seen = false; pickups = []; parts.length = 0; texts.length = 0; show('menu'); a(); };
+$('tutSkip').onclick = () => { store.set('gd_tut', '1'); endTutorial(); };
+$('bTutGo').onclick = () => { auInit(); endTutorial(); };
+$('bTutAgain').onclick = () => startTutorial(tut ? tut.label : 'Start', tut ? tut.after : () => show('menu'));
+
 // ---------------------------------------------------------------- input
 // Pressed state lives in Sets keyed by pointer id / key code (never a ++/-- counter), and is wiped by every
 // escape route (blur, tab hide, right-click, release outside the window), so a lost key-up can't leave you stuck.
@@ -363,6 +452,7 @@ function setPush(v) {
   v = v ? 1 : 0;
   if (v === pushState) return;
   pushState = v;
+  if (view === 'tut') { (v ? SFX.push : SFX.pull)(); return; }
   if (view !== 'play') return;
   seq++; inputs.push({ seq, push: v, t: performance.now() });
   if (inputs.length > 64) inputs.splice(0, inputs.length - 64);
@@ -502,12 +592,13 @@ function update(dt) {
   T += dt;
   const now = performance.now();
   const live = snap && (snap.ph === 'play' || snap.ph === 'overtime');
+  if (tut) tutorialStep(dt);
   // Client-side prediction. The latest server state is `owd` old and doesn't yet contain our unacknowledged inputs,
   // so re-simulate it forward to "now" with the same physics the server runs, applying our inputs as pressed.
   const owd = Math.min(0.25, rtt / 2), ahead = Math.min(0.4, (now - recvAt) / 1000 + owd), w0 = recvAt - owd * 1000;
   for (let i = 0; i < 2; i++) {
     const d = disp[i];
-    if (!d.seen) continue;
+    if (!d.seen || tut) continue;
     let tx = d.bx, ty = d.by;
     if (live && d.alive && ahead > 0.001) {
       const o = { x: d.bx, y: d.by, vx: d.bvx, vy: d.bvy }, n = Math.max(1, Math.ceil(ahead * 60)), h = ahead / n;
@@ -524,7 +615,7 @@ function update(dt) {
     if (d.alive && live) { d.trail.push(d.x, d.y); if (d.trail.length > 46) d.trail.splice(0, 2); }
     else if (d.trail.length) d.trail.splice(0, 2);
   }
-  if (!snap) idle.forEach((o, i) => { // attract-mode orbit behind the menu
+  if (!snap && !tut) idle.forEach((o, i) => { // attract-mode orbit behind the menu
     const a = T * (0.62 + i * 0.06) + i * Math.PI, r = 235 + Math.sin(T * 0.7 + i * 2.1) * 90;
     o.x = Math.cos(a) * r; o.y = Math.sin(a) * r; o.trail.push(o.x, o.y); if (o.trail.length > 70) o.trail.splice(0, 2);
   });
@@ -543,7 +634,7 @@ function draw() {
   ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
   if (bg) ctx.drawImage(bg, 0, 0);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  if (!snap) {
+  if (!snap && !tut) {
     ctx.save(); ctx.translate(IX, IY); ctx.scale(IS, IS);
     drawArena(C.R);
     idle.forEach((o, i) => { trailOf(o.trail, i); orbBody(o.x, o.y, i, 1); });
@@ -553,6 +644,7 @@ function draw() {
   const sx = shake ? (Math.random() - 0.5) * shake : 0, sy = shake ? (Math.random() - 0.5) * shake : 0;
   ctx.save(); ctx.translate(CX + sx, CY + sy); ctx.scale(S, S);
   drawArena(curRad);
+  drawTutOverlay();
   drawPickups();
   for (let i = 0; i < 2; i++) trailOf(disp[i].trail, i);
   for (let i = 0; i < 2; i++) drawOrb(i);
@@ -672,7 +764,7 @@ function frame(now) {
   if (ftAvg > 27 && DPR > 1 && now - lastDrop > 4000) { lastDrop = now; dprCap = Math.max(1, DPR - 0.5); ftAvg = 16.7; resize(); } // struggling GPU: drop resolution, keep framerate
   update(dt); draw(); requestAnimationFrame(frame);
 }
-if (typeof window !== 'undefined' && window.__GD_TEST) window.__GD_TEST.api = { disp, inputs, get seq() { return seq; }, get rtt() { return rtt; } }; // test hook (no-op in production)
+if (typeof window !== 'undefined' && window.__GD_TEST) window.__GD_TEST.api = { disp, inputs, get tut() { return tut; }, TUT, pickupsRef: () => pickups, get seq() { return seq; }, get rtt() { return rtt; } }; // test hook (no-op in production)
 requestAnimationFrame(frame);
 refreshOnline();
 connect();
