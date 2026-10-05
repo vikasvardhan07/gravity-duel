@@ -9,9 +9,11 @@
     R: 420,          // arena radius (outer hazard ring)
     CORE: 40,        // black-hole radius (inner hazard)
     ORB: 18,         // orb radius
-    A: 1080,         // gravity acceleration (push outward / pull inward)
+    VR: 230,         // steady radial speed while holding (out) / released (in)
+    TAU_R: 0.13,     // how quickly radial speed eases to +/-VR (s)
+    TAU_T: 0.3,      // how quickly orbital speed eases to its radius-dependent target (s)
+    VT_MAX: 800,
     VMAX: 910,       // speed cap
-    RDAMP: 0.35,     // damping on radial velocity only (tangential speed is conserved); low so a push swings you out and a release swings you back in past the middle ring
     MATCH: 90,       // seconds
     COUNT: 4,        // pre-match countdown (1s READY + 3,2,1)
     RESPAWN: 1.6,    // seconds out after dying
@@ -26,18 +28,25 @@
     R_MIN: 300,      // ...down to this radius
   };
 
-  // Integrate one orb for dt seconds. `push` = 1 accelerates away from the well, 0 toward it.
+  // Integrate one orb for dt seconds. `push` = 1 climbs away from the well, 0 sinks toward it.
+  // Radial speed eases to +/-VR (steady, predictable climb/sink); orbital speed eases to VT(r) (closer = faster).
   function advance(o, push, dt) {
-    const d = Math.hypot(o.x, o.y) || 1e-6;
+    const d = Math.max(Math.hypot(o.x, o.y), 1e-6);
     const nx = o.x / d, ny = o.y / d;
-    const a = push ? C.A : -C.A;
-    o.vx += nx * a * dt; o.vy += ny * a * dt;
-    const vr = o.vx * nx + o.vy * ny;
-    const dv = vr * (1 - Math.exp(-C.RDAMP * dt));
-    o.vx -= nx * dv; o.vy -= ny * dv;
-    const sp = Math.hypot(o.vx, o.vy);
-    if (sp > C.VMAX) { const k = C.VMAX / sp; o.vx *= k; o.vy *= k; }
-    o.x += o.vx * dt; o.y += o.vy * dt;
+    let vr = o.vx * nx + o.vy * ny;
+    const tx = -ny, ty = nx;
+    let vt = o.vx * tx + o.vy * ty;
+    const dir = vt < 0 ? -1 : 1;
+    vr += ((push ? C.VR : -C.VR) - vr) * (1 - Math.exp(-dt / C.TAU_R));
+    const want = Math.min(C.VT_MAX, C.START_V * Math.sqrt(C.START_D / Math.max(d, C.CORE)));
+    vt = dir * (Math.abs(vt) + (want - Math.abs(vt)) * (1 - Math.exp(-dt / C.TAU_T)));
+    o.vx = nx * vr + tx * vt; o.vy = ny * vr + ty * vt;
+    // integrate in polar coordinates so orbits stay circular-ish (no centrifugal drift), then rebuild the cartesian state
+    const nr = Math.max(d + vr * dt, 1e-3);
+    const th = Math.atan2(o.y, o.x) + (vt / d) * dt;
+    const cx = Math.cos(th), cy = Math.sin(th);
+    o.x = cx * nr; o.y = cy * nr;
+    o.vx = cx * vr - cy * vt; o.vy = cy * vr + cx * vt;
   }
 
   return { C, advance };

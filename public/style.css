@@ -78,10 +78,10 @@ kbd{font:700 11px var(--mono);letter-spacing:.12em;padding:5px 8px;border:1px so
    linear-gradient(var(--bone),var(--bone)) 100% 100%/14px 1px,linear-gradient(var(--bone),var(--bone)) 100% 100%/1px 14px;
   background-repeat:no-repeat}
 
-h1{margin:0;font:900 clamp(52px,12.4vw,150px)/.82 var(--disp);letter-spacing:-.055em;text-transform:uppercase}
-h1 span{display:block;animation:slab .9s var(--ease) both;animation-delay:calc(var(--i)*.09s)}
-h1 .o{color:transparent;-webkit-text-stroke:2px var(--bone);margin-left:.18em}
-@keyframes slab{from{transform:translateY(40%);opacity:0;clip-path:inset(0 0 100% 0)}to{clip-path:inset(0)}}
+h1{margin:0;font:900 clamp(46px,8.6vw,128px)/.82 var(--disp);letter-spacing:-.055em;text-transform:uppercase}
+h1 span{display:block;padding-right:.08em;animation:slab .9s var(--ease) both;animation-delay:calc(var(--i)*.09s)}
+h1 .o{color:var(--p0);margin-left:.18em}
+@keyframes slab{from{transform:translateY(40%);opacity:0;clip-path:inset(0 0 100% 0)}to{clip-path:inset(-20% -20% -20% -20%)}}
 .tag{margin:22px 0 0;max-width:34ch;font:400 clamp(15px,2vw,19px)/1.45 var(--body);color:#c9c3b4;animation:fade .8s both;animation-delay:calc(var(--i)*.09s)}
 .rules{list-style:none;margin:30px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-top:1px solid var(--line);animation:fade .8s both;animation-delay:calc(var(--i)*.09s)}
 .rules li{padding:14px 14px 0 0;font:400 13px/1.4 var(--body);color:var(--mut);display:flex;flex-direction:column;gap:8px}
@@ -166,7 +166,7 @@ input:focus{border-bottom-color:var(--p0)}
 #tutKeyLabel{font:500 11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--mut)}
 #tutState{font:700 13px/1 var(--mono);letter-spacing:.14em;padding:11px 16px;border:1px solid var(--bone);background:rgba(9,9,12,.7);min-width:150px;text-align:center;transition:background .08s,color .08s}
 #tutState.on{background:var(--p0);border-color:var(--p0);color:var(--ink)}
-#tut .act.sm{position:absolute;right:14px;bottom:calc(14px + var(--safe-b));pointer-events:auto;width:auto;background:rgba(9,9,12,.7)}
+#tut .act.sm{position:absolute;left:14px;bottom:calc(14px + var(--safe-b));pointer-events:auto;width:auto;background:rgba(9,9,12,.7)}
 h2.ok{color:var(--p0)}
 @media (max-width:860px){
   .shell{grid-template-columns:1fr;grid-template-areas:"top" "hero" "panel";row-gap:22px}

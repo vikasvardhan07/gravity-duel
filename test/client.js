@@ -44,11 +44,11 @@ function run({ owd, predict = true, seconds = 12, seed = 1 }) {
     if (f % 60 === 0) { const ts = vt - owd * 2000; fake.onmessage({ data: JSON.stringify({ t: 'pong', ts }) }); }
     const fr = rafs.shift(); if (fr) fr(vt);
     if (f > 120 && ideal.players[0].alive && g.players[0].alive) {
-      const d = api.disp[0], p = ideal.players[0];
+      const d = api.disp[0], p = g.players[0];
       const e = Math.hypot(d.x - p.x, d.y - p.y); errSum += e * e; errN++;
       if (lastSnap) { const b = lastSnap.p[0]; baseErrSum += Math.hypot(b[0] - p.x, b[1] - p.y) ** 2; }
-      if (prev) maxJump = Math.max(maxJump, Math.hypot(d.x - prev.x, d.y - prev.y));
-      prev = { x: d.x, y: d.y };
+      if (prev && Math.hypot(p.x - prev.sx, p.y - prev.sy) < 100) maxJump = Math.max(maxJump, Math.hypot(d.x - prev.x, d.y - prev.y));
+      prev = { x: d.x, y: d.y, sx: p.x, sy: p.y };
     } else prev = null;
   }
   return { rms: Math.sqrt(errSum / Math.max(1, errN)), baseRms: Math.sqrt(baseErrSum / Math.max(1, errN)), maxJump, n: errN, api, sent, fire, handlers };

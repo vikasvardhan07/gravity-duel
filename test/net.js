@@ -35,11 +35,14 @@ function client(name) {
   ok(a.has('joined').you !== b.has('joined').you, 'distinct player slots');
   ok(a.snaps > 5 && b.snaps > 5, 'both receive snapshots');
   ok(a.last.ph === 'count', 'countdown phase first');
-  await sleep(4500);
+  for (let i = 0; i < 80 && a.last.ph !== 'play'; i++) await sleep(100);
+  a.send({ t: 'in', p: 1 }); b.send({ t: 'in', p: 1 });
   ok(a.last.ph === 'play', 'moves to play after countdown');
-  const x0 = a.last.p[0][0], y0 = a.last.p[0][1];
-  a.send({ t: 'in', p: 1 }); b.send({ t: 'in', p: 0 }); await sleep(800);
-  ok(Math.hypot(a.last.p[0][0] - x0, a.last.p[0][1] - y0) > 20, 'orb moves in play');
+  a.send({ t: 'in', p: 1 }); b.send({ t: 'in', p: 0 }); await sleep(80);
+  const ia = a.has('joined').you;
+  const x0 = a.last.p[ia][0], y0 = a.last.p[ia][1];
+  await sleep(250);
+  ok(Math.hypot(a.last.p[ia][0] - x0, a.last.p[ia][1] - y0) > 20, 'orb moves in play');
   ok(a.last.tm < 90, 'match timer ticking');
 
   // 3. reconnect: drop Alice, resume with token

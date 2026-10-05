@@ -170,7 +170,7 @@ function show(v) {
   const playing = v === 'play' || v === 'result';
   $('hud').classList.toggle('hidden', !playing);
   if (v !== 'play') $('hint').classList.add('hidden');
-  if (v !== 'tut' && v !== 'tdone' && tut) { tut = null; disp[0].seen = false; pickups = []; }
+  if (v !== 'tut' && v !== 'tdone' && tut) { tut = null; resize(); disp[0].seen = false; pickups = []; }
   if (v === 'menu') { snap = null; droneSet(false); refreshOnline(); }
 }
 let toastT = 0;
@@ -370,7 +370,7 @@ const TUT = [
 ];
 let tut = null;
 const tutOrb = () => ({ x: C.START_D, y: 0, vx: 0, vy: C.START_V });
-function startTutorial(label, after) {
+function startTutorial(label, after) { setTimeout(resize, 0);
   clearTimeout(resultTimer);
   snap = null; pickups = []; parts.length = 0; texts.length = 0; me = 0; curRad = C.R; shake = 0;
   disp.forEach((d) => { d.trail.length = 0; d.seen = false; });
@@ -437,7 +437,7 @@ function drawTutOverlay() {
   ctx.fillText(tut.step === 0 ? 'REACH THE RING' : 'FALL INSIDE THE RING', 0, -r - 12);
   if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
 }
-const endTutorial = () => { const a = tut.after; tut = null; disp[0].seen = false; pickups = []; parts.length = 0; texts.length = 0; show('menu'); a(); };
+const endTutorial = () => { const a = tut.after; tut = null; resize(); disp[0].seen = false; pickups = []; parts.length = 0; texts.length = 0; show('menu'); a(); };
 $('tutSkip').onclick = () => { store.set('gd_tut', '1'); endTutorial(); };
 $('bTutGo').onclick = () => { auInit(); endTutorial(); };
 $('bTutAgain').onclick = () => startTutorial(tut ? tut.label : 'Start', tut ? tut.after : () => show('menu'));
@@ -518,7 +518,7 @@ function resize() {
   W = innerWidth; H = innerHeight;
   if (W * H * DPR * DPR > 5e6) DPR = Math.max(1, Math.sqrt(5e6 / (W * H)));
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
-  const land = W > H * 1.15, top = land ? 18 : 104, bot = land ? 18 : 52;
+  const land = W > H * 1.15, top = land ? (tut ? 100 : 18) : 104, bot = land ? (tut ? 70 : 18) : 52;
   S = Math.min(W / (2 * C.R + 110), (H - top - bot) / (2 * C.R + 110));
   CX = W / 2; CY = top + (H - top - bot) / 2;
   if (W > 860) { IX = W * 0.69; IY = H * 0.5; IS = Math.min(W * 0.3, H * 0.4) / C.R; }
