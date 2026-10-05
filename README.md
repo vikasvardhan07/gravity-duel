@@ -1,5 +1,7 @@
 # Gravity Duel
 
+**Play:** https://gravity-duel-m3pr.onrender.com
+
 A real-time 2-player duel that runs in any browser. **One input: hold to push away from the black hole, release to fall in.**
 
 - Move closer to the well and you speed up; move out and you slow down (angular momentum is conserved).
